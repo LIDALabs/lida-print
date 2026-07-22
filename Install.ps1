@@ -166,9 +166,20 @@ $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyConti
 if ($existingTask) {
     try {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
-        Write-Warn "Tarea anterior eliminada (se re-registra apuntando a la instalacion estable)"
+        Write-OK "Tarea anterior eliminada (se re-registra apuntando a la instalacion estable)"
     } catch {
-        Write-Warn "No se pudo eliminar la tarea anterior (creada con admin). Ejecuta como Administrador una vez para migrarla."
+        # Tarea creada desde una sesion elevada: un proceso normal no puede
+        # borrarla. Pedir elevacion UNA vez (UAC) solo para eliminarla.
+        Write-Warn "La tarea existente fue creada como Administrador. Acepta el UAC para migrarla..."
+        try {
+            $elevArgs = '-NoProfile -Command "Unregister-ScheduledTask -TaskName ''' + $taskName + ''' -Confirm:$false"'
+            Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList $elevArgs
+        } catch {
+            Write-Warn "Elevacion cancelada."
+        }
+    }
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Write-Fail "La tarea existente no pudo eliminarse. Ejecuta como Administrador: Unregister-ScheduledTask -TaskName $taskName -Confirm:0  y reinstala."
     }
 }
 
