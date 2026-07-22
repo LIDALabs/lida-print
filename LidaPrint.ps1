@@ -15,12 +15,31 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configPath = Join-Path $scriptDir "config.json"
 
+# Traza de arranque INCONDICIONAL, antes de validar nada. El monitor corre con
+# ventana oculta: si muere antes del banner, sin esta linea no queda rastro.
+function Write-BootLog {
+    param([string]$message, [string]$level = "INFO")
+    try {
+        $bootDir = Join-Path $scriptDir "logs"
+        if (-not (Test-Path $bootDir)) { New-Item -ItemType Directory -Path $bootDir -Force | Out-Null }
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$level] $message"
+        Add-Content -Path (Join-Path $bootDir "PrintLog_$(Get-Date -Format 'yyyy-MM').txt") -Value $line -Encoding UTF8
+        Write-Host $line
+    } catch { }
+}
+Write-BootLog "Proceso monitor lanzado (PID $PID, usuario $env:USERNAME)"
+
 if (-not (Test-Path $configPath)) {
-    Write-Host "[ERROR] config.json no encontrado en $scriptDir" -ForegroundColor Red
+    Write-BootLog "config.json no encontrado en $scriptDir - abortando" "ERROR"
     Start-Sleep 10; exit 1
 }
 
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
+try {
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+} catch {
+    Write-BootLog "config.json invalido o ilegible: $_ - abortando" "ERROR"
+    Start-Sleep 10; exit 1
+}
 
 # ---------- Resolucion de rutas (self-locating) ----------
 # Las rutas guardadas en config.json pueden quedar obsoletas si la carpeta
@@ -55,11 +74,11 @@ foreach ($base in @("$env:ProgramFiles\gs", "${env:ProgramFiles(x86)}\gs", "$env
 $gsResolved = Resolve-ToolPath $config.gsPath $gsCandidates
 
 if (-not $config.printer) {
-    Write-Host "[ERROR] No hay impresora configurada." -ForegroundColor Red
+    Write-BootLog "No hay impresora configurada - abortando. Abre el Configurator, elige impresora y Guardar." "ERROR"
     Start-Sleep 10; exit 1
 }
 if (-not $sumatraResolved -and -not $gsResolved) {
-    Write-Host "[ERROR] Ni SumatraPDF ni Ghostscript encontrados. Re-ejecuta el instalador." -ForegroundColor Red
+    Write-BootLog "Ni SumatraPDF ni Ghostscript encontrados - abortando. Re-ejecuta el instalador." "ERROR"
     Start-Sleep 10; exit 1
 }
 if (-not $config.downloadFolder) {
@@ -67,7 +86,7 @@ if (-not $config.downloadFolder) {
     $config.downloadFolder = Join-Path $env:USERPROFILE "Downloads"
 }
 if (-not (Test-Path $config.downloadFolder)) {
-    Write-Host "[ERROR] Carpeta de descargas no encontrada: $($config.downloadFolder)" -ForegroundColor Red
+    Write-BootLog "Carpeta de descargas no encontrada: $($config.downloadFolder) - abortando" "ERROR"
     Start-Sleep 10; exit 1
 }
 
