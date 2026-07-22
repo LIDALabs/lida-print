@@ -10,6 +10,7 @@ Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y 
 lida-print/
 ├── README.md                ← Este archivo (documentacion completa)
 ├── web-install.ps1          ← Instalacion web en un comando (curl / irm)
+├── uninstall.ps1            ← Desinstalacion completa en un comando
 ├── Instalador.bat           ← Doble clic para instalar (no requiere admin)
 ├── Install.ps1              ← Logica de instalacion (la corren ambos de arriba)
 ├── LidaPrint.ps1            ← Monitor + servidor HTTP
@@ -645,17 +646,24 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 
 ## Desinstalar
 
-```powershell
-Unregister-ScheduledTask -TaskName "LidaPrint" -Confirm:$false
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\LidaPrint"
+Un solo comando (PowerShell, sin admin):
 
-# Quitar la entrada del PATH del usuario
-$p = [Environment]::GetEnvironmentVariable('Path', 'User')
-$clean = ($p -split ';' | Where-Object { $_ -ne "$env:LOCALAPPDATA\LidaPrint" }) -join ';'
-[Environment]::SetEnvironmentVariable('Path', $clean, 'User')
+```powershell
+irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/uninstall.ps1 | iex
 ```
 
-Si venias de una instalacion vieja, elimina tambien `C:\AutoPrintFacturas` si existe.
+Elimina **todo**: la tarea programada, los procesos del monitor, la instalacion actual
+(`%LOCALAPPDATA%\LidaPrint`), la instalacion vieja (`C:\AutoPrintFacturas` si existe) y la
+entrada del PATH. Es idempotente: se puede correr aunque algo ya no exista.
+
+Para **reinstalar de cero**: correr la desinstalacion y despues el comando de instalacion.
+
+SumatraPDF y Ghostscript no se eliminan (una reinstalacion los reutiliza). Para quitarlos:
+
+```powershell
+winget uninstall SumatraPDF.SumatraPDF
+winget uninstall ArtifexSoftware.GhostScript
+```
 
 ---
 

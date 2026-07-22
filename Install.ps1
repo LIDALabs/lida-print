@@ -42,7 +42,7 @@ New-Item -ItemType Directory -Path (Join-Path $installPath "logs") -Force | Out-
 if ($scriptDir -ne $installPath) {
     Write-Step "Copiando archivos..."
     $filesToCopy = @(
-        "LidaPrint.ps1", "Configurator.ps1", "Install.ps1",
+        "LidaPrint.ps1", "Configurator.ps1", "Install.ps1", "uninstall.ps1",
         "Instalador.bat", "LidaPrint.bat", "LidaPrint.vbs",
         "logo.png", "README.md"
     )

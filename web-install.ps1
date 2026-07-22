@@ -23,6 +23,7 @@ $files = @(
     "LidaPrint.ps1",
     "Configurator.ps1",
     "Install.ps1",
+    "uninstall.ps1",
     "Instalador.bat",
     "LidaPrint.bat",
     "LidaPrint.vbs",
