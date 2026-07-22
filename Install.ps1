@@ -172,17 +172,43 @@ if ($existingTask) {
     }
 }
 
+$taskRegistered = $false
 try {
     $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$monitorPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
+    $taskRegistered = $true
     Write-OK "Tarea programada creada: $taskName (arranca al iniciar sesion)"
 } catch {
     Write-Warn "No se pudo crear la tarea programada: $_"
 }
 
-# ===================== 7. RESUMEN Y CONFIGURATOR =====================
+# Arrancar el monitor YA, sin esperar al proximo inicio de sesion.
+# (La politica por defecto de la tarea ignora arranques si ya esta corriendo.)
+if ($taskRegistered) {
+    try {
+        Start-ScheduledTask -TaskName $taskName
+        Write-OK "Monitor iniciado (ya esta vigilando la carpeta)"
+    } catch {
+        Write-Warn "El monitor arrancara en el proximo inicio de sesion."
+    }
+}
+
+# ===================== 7. PATH DEL USUARIO =====================
+# Uso tecnico por consola: escribir 'lidaprint' abre el Configurator
+# (resuelve LidaPrint.bat via PATHEXT). Solo PATH de usuario, sin admin.
+Write-Step "Agregando la instalacion al PATH del usuario..."
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($null -eq $userPath) { $userPath = "" }
+if (($userPath -split ';') -notcontains $installPath) {
+    [Environment]::SetEnvironmentVariable('Path', ($userPath.TrimEnd(';') + ";$installPath").TrimStart(';'), 'User')
+    Write-OK "PATH actualizado. Abre una consola NUEVA y ejecuta: lidaprint"
+} else {
+    Write-OK "La instalacion ya esta en el PATH"
+}
+
+# ===================== 8. RESUMEN Y CONFIGURATOR =====================
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "  INSTALACION COMPLETADA" -ForegroundColor Green
@@ -191,7 +217,8 @@ Write-Host ""
 Write-Host "  Instalado en: $installPath"
 Write-Host "  SumatraPDF:   $(if ($sumatraPath) { $sumatraPath } else { 'no instalado' })"
 Write-Host "  Ghostscript:  $(if ($gsPath) { $gsPath } else { 'no instalado' })"
-Write-Host "  Tarea:        $taskName"
+Write-Host "  Tarea:        $taskName $(if ($taskRegistered) { '(monitor corriendo)' } else { '' })"
+Write-Host "  Consola:      escribe 'lidaprint' (en una consola nueva) para abrir el Configurator"
 Write-Host ""
 Write-Host "  Abriendo el Configurator..." -ForegroundColor Yellow
 

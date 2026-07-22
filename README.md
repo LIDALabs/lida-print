@@ -100,7 +100,24 @@ Ambas opciones ejecutan `Install.ps1`, que automaticamente:
 - Verifica/instala **Ghostscript** (via `winget` o descarga directa; puede pedir UAC).
 - Actualiza `config.json` con las rutas detectadas.
 - Crea la tarea programada **LidaPrint** a nivel usuario (arranca al iniciar sesion, sin admin).
+- **Inicia el monitor de inmediato** (no hace falta cerrar sesion).
+- **Agrega la instalacion al PATH del usuario**: el comando `lidaprint` abre el Configurator.
 - Abre el Configurator.
+
+### Despues de instalar
+
+No hay nada que "correr" a mano: el monitor ya quedo corriendo y se re-lanza solo en cada
+inicio de sesion. Para uso tecnico por consola (abrir una consola **nueva** tras instalar):
+
+```cmd
+lidaprint                                    :: abre el Configurator
+```
+
+```powershell
+Start-ScheduledTask -TaskName "LidaPrint"    # arrancar el monitor a mano
+Stop-ScheduledTask  -TaskName "LidaPrint"    # detenerlo
+Get-ScheduledTask   -TaskName "LidaPrint"    # ver estado
+```
 
 > **Migracion desde versiones viejas:** si tenias LidaPrint en `C:\AutoPrintFacturas`, el
 > instalador elimina la tarea vieja y la re-registra apuntando a la nueva ubicacion estable.
@@ -631,6 +648,11 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 ```powershell
 Unregister-ScheduledTask -TaskName "LidaPrint" -Confirm:$false
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\LidaPrint"
+
+# Quitar la entrada del PATH del usuario
+$p = [Environment]::GetEnvironmentVariable('Path', 'User')
+$clean = ($p -split ';' | Where-Object { $_ -ne "$env:LOCALAPPDATA\LidaPrint" }) -join ';'
+[Environment]::SetEnvironmentVariable('Path', $clean, 'User')
 ```
 
 Si venias de una instalacion vieja, elimina tambien `C:\AutoPrintFacturas` si existe.

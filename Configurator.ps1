@@ -1149,6 +1149,8 @@ $btnSave.Add_Click({
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
             $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
+            # Arrancar el monitor de inmediato (si ya corre, el Task Scheduler ignora el arranque)
+            try { Start-ScheduledTask -TaskName $taskName } catch { }
             if ($taskStale) {
                 [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$monitorPath", "Tarea reparada", "OK", "Information")
             }
