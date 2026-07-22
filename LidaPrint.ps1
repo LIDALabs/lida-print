@@ -29,6 +29,17 @@ function Write-BootLog {
 }
 Write-BootLog "Proceso monitor lanzado (PID $PID, usuario $env:USERNAME)"
 
+# Ocultar la propia ventana de consola. La tarea lanza con -WindowStyle Minimized
+# porque Hidden puede colgar el arranque en Windows 11 (el host de consola por
+# defecto, Windows Terminal, tiene problemas creando consolas ocultas en segundo
+# plano). Arrancamos visibles-minimizados (seguro) y nos escondemos aca.
+try {
+    $sig = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+    $win32 = Add-Type -MemberDefinition $sig -Name "Win32ShowWindow" -Namespace "Native" -PassThru
+    $hwnd = (Get-Process -Id $PID).MainWindowHandle
+    if ($hwnd -ne [IntPtr]::Zero) { [void]$win32::ShowWindow($hwnd, 0) }
+} catch { }
+
 if (-not (Test-Path $configPath)) {
     Write-BootLog "config.json no encontrado en $scriptDir - abortando" "ERROR"
     Start-Sleep 10; exit 1

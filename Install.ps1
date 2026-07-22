@@ -174,9 +174,11 @@ if ($existingTask) {
 
 $taskRegistered = $false
 try {
-    # -NoProfile: el perfil del usuario puede colgarse o fallar en sesion oculta
-    # e impedir que el script llegue a ejecutarse. -NonInteractive: nunca esperar input.
-    $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$monitorPath`""
+    # -WindowStyle Minimized (NO Hidden): en Windows 11, crear una consola oculta
+    # desde el Task Scheduler puede colgar el proceso antes de ejecutar el script
+    # (verificado en despliegue real). El monitor esconde su propia ventana al arrancar.
+    # -NoProfile: el perfil del usuario puede colgarse o fallar en sesion no interactiva.
+    $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$monitorPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null

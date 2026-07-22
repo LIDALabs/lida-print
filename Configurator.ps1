@@ -1139,14 +1139,17 @@ $btnSave.Add_Click({
     $taskStale = $false
     if ($existingTask) {
         $curArgs = ($existingTask.Actions | Select-Object -First 1).Arguments
-        if ($curArgs -notlike "*$monitorPath*") { $taskStale = $true }
+        # Obsoleta si apunta a otra ruta O si quedo con -WindowStyle Hidden
+        # (cuelga el arranque en Windows 11; se migra a Minimized + auto-ocultado)
+        if ($curArgs -notlike "*$monitorPath*" -or $curArgs -like "*-WindowStyle Hidden*") { $taskStale = $true }
     }
 
     if ($chkAutoStart.Checked -and (-not $existingTask -or $taskStale)) {
         try {
             if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
-            # -NoProfile evita que el perfil del usuario bloquee la sesion oculta
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$monitorPath`""
+            # Minimized (no Hidden): Hidden puede colgar el arranque en Windows 11.
+            # El monitor esconde su propia ventana. -NoProfile evita bloqueos del perfil.
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$monitorPath`""
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
             $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
