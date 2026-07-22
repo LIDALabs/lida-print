@@ -259,12 +259,14 @@ function Process-InvoiceFile {
     param([string]$fp)
     $fileName = Split-Path $fp -Leaf
 
-    # Esperar tamano estable
+    # Esperar tamano estable. Chequeos rapidos (200ms) para minimizar la latencia
+    # de impresion: ~600ms tipico para un archivo ya descargado, hasta 5s para
+    # descargas lentas.
     $lastSize = -1; $stable = 0; $ready = $false
-    for ($i = 0; $i -lt 20; $i++) {
-        Start-Sleep -Milliseconds 500
+    for ($i = 0; $i -lt 25; $i++) {
+        Start-Sleep -Milliseconds 200
         try { $sz = (Get-Item -LiteralPath $fp).Length } catch { break }
-        if ($sz -eq $lastSize -and $sz -gt 0) { $stable++; if ($stable -ge 3) { $ready = $true; break } }
+        if ($sz -eq $lastSize -and $sz -gt 0) { $stable++; if ($stable -ge 2) { $ready = $true; break } }
         else { $stable = 0 }
         $lastSize = $sz
     }

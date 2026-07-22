@@ -236,13 +236,21 @@ Write-Host "  Ghostscript:  $(if ($gsPath) { $gsPath } else { 'no instalado' })"
 Write-Host "  Tarea:        $taskName $(if ($taskRegistered) { '(monitor corriendo)' } else { '' })"
 Write-Host "  Consola:      escribe 'lidaprint' (en una consola nueva) para abrir el Configurator"
 Write-Host ""
-Write-Host "  Abriendo el Configurator..." -ForegroundColor Yellow
+# El Configurator se abre SOLO en la primera instalacion (sin impresora
+# configurada). En reinstalaciones y updates no se abre nada visual:
+# la app se accede escribiendo 'lidaprint' en Win+R o en una consola.
+$needsSetup = $true
+try {
+    $cfgCheck = Get-Content (Join-Path $installPath "config.json") -Raw | ConvertFrom-Json
+    if ($cfgCheck.printer) { $needsSetup = $false }
+} catch { }
 
-$configuratorPath = Join-Path $installPath "Configurator.ps1"
-if (Test-Path $configuratorPath) {
-    # -WindowStyle Hidden: sin consola visible detras de la GUI; el Configurator
-    # queda como proceso independiente (cerrar esta consola no lo afecta).
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$configuratorPath`""
+if ($needsSetup) {
+    Write-Host "  Primera instalacion: abriendo el Configurator..." -ForegroundColor Yellow
+    $configuratorPath = Join-Path $installPath "Configurator.ps1"
+    if (Test-Path $configuratorPath) {
+        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$configuratorPath`""
+    }
 } else {
-    Write-Warn "Configurator.ps1 no encontrado en $installPath"
+    Write-Host "  Configuracion existente detectada. Para abrir la app: Win+R -> lidaprint" -ForegroundColor Gray
 }
