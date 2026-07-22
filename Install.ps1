@@ -170,8 +170,13 @@ try {
     Write-Warn "No se pudo crear la tarea programada: $_"
 }
 
+# Matar monitores huerfanos de instalaciones previas: des-registrar una tarea
+# NO mata su proceso, y dos monitores en paralelo compiten por los archivos.
+Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 # Arrancar el monitor YA, sin esperar al proximo inicio de sesion.
-# (La politica por defecto de la tarea ignora arranques si ya esta corriendo.)
 if ($taskRegistered) {
     try {
         Start-ScheduledTask -TaskName $taskName

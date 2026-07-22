@@ -29,6 +29,15 @@ function Write-BootLog {
 }
 Write-BootLog "Proceso monitor lanzado (PID $PID, usuario $env:USERNAME)"
 
+# Instancia unica: dos monitores en paralelo compiten por los mismos archivos
+# (doble impresion o errores espurios cuando uno borra lo que el otro procesa).
+# El mutex vive lo que vive el proceso; el SO lo libera al salir.
+$script:instanceMutex = New-Object System.Threading.Mutex($false, "Local\LidaPrintMonitor")
+if (-not $script:instanceMutex.WaitOne(0)) {
+    Write-BootLog "Ya hay otro monitor corriendo en esta sesion - esta instancia sale (PID $PID)" "WARN"
+    exit 0
+}
+
 # Ocultar la propia ventana de consola. La tarea lanza con -WindowStyle Minimized
 # porque Hidden puede colgar el arranque en Windows 11; una vez corriendo, el
 # monitor esconde su consola por completo (invisible e incerrable por el usuario).
@@ -107,12 +116,16 @@ function Write-Log {
         $logFile = Join-Path $logDir "PrintLog_$(Get-Date -Format 'yyyy-MM').txt"
         Add-Content -Path $logFile -Value $line -Encoding UTF8
     }
-    switch ($level) {
-        "ERROR" { Write-Host $line -ForegroundColor Red }
-        "WARN"  { Write-Host $line -ForegroundColor Yellow }
-        "OK"    { Write-Host $line -ForegroundColor Green }
-        default { Write-Host $line -ForegroundColor Gray }
-    }
+    # La salida a consola es opcional: en consola headless o rota, Write-Host
+    # puede lanzar (error 0xE9). El log a archivo ya se escribio arriba.
+    try {
+        switch ($level) {
+            "ERROR" { Write-Host $line -ForegroundColor Red }
+            "WARN"  { Write-Host $line -ForegroundColor Yellow }
+            "OK"    { Write-Host $line -ForegroundColor Green }
+            default { Write-Host $line -ForegroundColor Gray }
+        }
+    } catch { }
 }
 
 function Test-FileReady {

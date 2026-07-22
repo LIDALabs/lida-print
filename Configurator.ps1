@@ -1096,6 +1096,12 @@ $btnSave.Add_Click({
     if ($chkAutoStart.Checked) {
         try {
             Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            # Matar tambien monitores huerfanos (procesos fuera de la tarea):
+            # con el candado de instancia unica, un huerfano vivo bloquearia
+            # al monitor nuevo y seguiria corriendo con la config vieja.
+            Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             Start-Sleep -Milliseconds 500
             Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
         } catch {
