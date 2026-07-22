@@ -190,7 +190,7 @@ function Start-WebListener {
                     $req = $ctx.Request
                     $resp = $ctx.Response
 
-                    # GET / — Dashboard web
+                    # GET / - Dashboard web
                     if ($req.HttpMethod -eq "GET" -and $req.Url.AbsolutePath -eq "/") {
                         $pqRows = if ($pq.Count) { ($pq.ToArray() | ForEach-Object { "<div class='ok'>$_</div>" }) -join "" } else { "<div class='empty'>(vacia)</div>" }
                         $slRows = if ($sl.Count) { ($sl.ToArray() | ForEach-Object { "<div class='skip'>$_</div>" }) -join "" } else { "<div class='empty'>(vacia)</div>" }
@@ -245,7 +245,7 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         $resp.Close(); continue
                     }
 
-                    # POST /print — Agregar archivo(s) a la cola de impresion
+                    # POST /print - Agregar archivo(s) a la cola de impresion
                     if ($req.Url.AbsolutePath -eq "/print") {
                         $reader = New-Object System.IO.StreamReader($req.InputStream)
                         $rawBody = $reader.ReadToEnd(); $reader.Close()
@@ -278,7 +278,7 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         continue
                     }
 
-                    # POST /skip — Marcar archivo(s) para NO imprimir
+                    # POST /skip - Marcar archivo(s) para NO imprimir
                     if ($req.Url.AbsolutePath -eq "/skip") {
                         $reader = New-Object System.IO.StreamReader($req.InputStream)
                         $rawBody = $reader.ReadToEnd(); $reader.Close()
@@ -311,7 +311,7 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         continue
                     }
 
-                    # POST /clear — Limpiar colas
+                    # POST /clear - Limpiar colas
                     if ($req.Url.AbsolutePath -eq "/clear") {
                         $pq.Clear()
                         $sl.Clear()
@@ -321,7 +321,7 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         continue
                     }
 
-                    # POST /print/file — Subir PDF directamente
+                    # POST /print/file - Subir PDF directamente
                     if ($req.Url.AbsolutePath -eq "/print/file") {
                         # Limite de tamano: proteccion contra abuso / agotamiento de disco
                         $maxUploadBytes = 50MB
@@ -431,7 +431,7 @@ try {
                         Write-Log "API: $fn en lista de omitidos, ignorando" "INFO"
                         $script:skipList.Remove($fn)
                     } else {
-                        # No esta en ninguna cola — ignorar
+                        # No esta en ninguna cola - ignorar
                     }
                 } else {
                     # MODO LOCAL: Usar patron si esta habilitado
@@ -452,7 +452,7 @@ try {
                     # En modo local, marcar como visto para no reprocesar
                     $seenFiles[$fp] = $true
                 }
-                # En modo API, no marcar si no estaba en cola — se reintentara en el proximo poll
+                # En modo API, no marcar si no estaba en cola - se reintentara en el proximo poll
             }
 
             # Limpiar tracking de archivos que ya no existen
