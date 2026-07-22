@@ -1138,18 +1138,18 @@ $btnSave.Add_Click({
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     $taskStale = $false
     if ($existingTask) {
-        $curArgs = ($existingTask.Actions | Select-Object -First 1).Arguments
-        # Obsoleta si apunta a otra ruta O si quedo con -WindowStyle Hidden
-        # (cuelga el arranque en Windows 11; se migra a Minimized + auto-ocultado)
-        if ($curArgs -notlike "*$monitorPath*" -or $curArgs -like "*-WindowStyle Hidden*") { $taskStale = $true }
+        $firstAction = $existingTask.Actions | Select-Object -First 1
+        # Obsoleta si apunta a otra ruta O si no usa conhost --headless
+        # (lanzadores viejos: Hidden colgaba en Win11, Minimized dejaba ventana cerrable)
+        if ($firstAction.Arguments -notlike "*$monitorPath*" -or $firstAction.Execute -notlike "*conhost*") { $taskStale = $true }
     }
 
     if ($chkAutoStart.Checked -and (-not $existingTask -or $taskStale)) {
         try {
             if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
-            # Minimized (no Hidden): Hidden puede colgar el arranque en Windows 11.
-            # El monitor esconde su propia ventana. -NoProfile evita bloqueos del perfil.
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$monitorPath`""
+            # conhost --headless: consola sin ventana (esquiva Windows Terminal en Win11,
+            # donde Hidden cuelga y ocultar la ventana no funciona). Nada que cerrar.
+            $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$monitorPath`""
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
             $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null

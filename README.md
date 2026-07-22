@@ -639,7 +639,8 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 | API no responde | Puerto en uso o firewall | `netstat -an \| findstr 8080` y abrir el puerto |
 | 401 Unauthorized | API Key incorrecta | Verificar el header `X-Api-Key` |
 | El listener no arranca | Falta reserva urlacl (tarea de usuario, sin admin) | Una vez, como Administrador: `netsh http add urlacl url=http://+:8080/ user=%USERNAME%` |
-| La tarea corre pero el log esta vacio (ni la linea de arranque) | Windows 11: `-WindowStyle Hidden` cuelga la creacion de la consola y el script nunca ejecuta | Reinstalar, o abrir el Configurator y **Guardar**: migra la tarea a `Minimized` (el monitor esconde su propia ventana al arrancar) |
+| La tarea corre pero el log esta vacio (ni la linea de arranque) | Windows 11: `-WindowStyle Hidden` cuelga la creacion de la consola y el script nunca ejecuta | Reinstalar, o abrir el Configurator y **Guardar**: migra la tarea a `conhost --headless` (sin ventana) |
+| Aparece una ventana de consola al imprimir y cerrarla mata el monitor | Tarea vieja lanzada con `-WindowStyle Minimized` (la ventana existia, solo minimizada) | Reinstalar o **Guardar**: la tarea migra a `conhost --headless`, el monitor corre sin ventana alguna |
 | Monitor se cierra al iniciar | Error en `config.json` | Revisar el log: toda salida temprana escribe su motivo (impresora, motores, carpeta) |
 | La consola parpadea al arrancar | Se ejecuto el `.bat` directo | Usar `LidaPrint.vbs` para arranque silencioso |
 

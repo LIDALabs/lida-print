@@ -185,11 +185,12 @@ if ($existingTask) {
 
 $taskRegistered = $false
 try {
-    # -WindowStyle Minimized (NO Hidden): en Windows 11, crear una consola oculta
-    # desde el Task Scheduler puede colgar el proceso antes de ejecutar el script
-    # (verificado en despliegue real). El monitor esconde su propia ventana al arrancar.
+    # conhost --headless: el monitor corre en una consola SIN ventana, esquivando
+    # Windows Terminal (host por defecto en Win11) donde tanto -WindowStyle Hidden
+    # (cuelga el arranque) como los trucos de ocultar ventana fallan. Sin ventana
+    # no hay nada que el usuario pueda cerrar por accidente.
     # -NoProfile: el perfil del usuario puede colgarse o fallar en sesion no interactiva.
-    $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$monitorPath`""
+    $action  = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$monitorPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
