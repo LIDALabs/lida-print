@@ -1149,8 +1149,6 @@ $btnSave.Add_Click({
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
             $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
-            # Arrancar el monitor de inmediato (si ya corre, el Task Scheduler ignora el arranque)
-            try { Start-ScheduledTask -TaskName $taskName } catch { }
             if ($taskStale) {
                 [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$monitorPath", "Tarea reparada", "OK", "Information")
             }
@@ -1161,8 +1159,23 @@ $btnSave.Add_Click({
         try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop } catch { }
     }
 
+    # REINICIAR el monitor SIEMPRE que auto-inicio este activo. Dos razones:
+    # 1. El monitor lee config.json solo al arrancar: sin reinicio, los cambios
+    #    guardados no se aplican.
+    # 2. Si el monitor murio al arrancar (ej: primera instalacion con la config
+    #    plantilla sin impresora), este es el punto que lo revive.
+    if ($chkAutoStart.Checked) {
+        try {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("No se pudo reiniciar el monitor: $_", "Advertencia", "OK", "Warning")
+        }
+    }
+
     [System.Windows.Forms.MessageBox]::Show(
-        "Configuracion guardada.`n`nImpresora: $($newConfig.printer)`nCopias: $($newConfig.copies)`nOrientacion: $($newConfig.orientation)`nPaper: $($newConfig.paperSize)`nEscala: $($newConfig.scale)%`nDPI: $($newConfig.dpi)`nMargenes: T=$($newConfig.marginTop) B=$($newConfig.marginBottom) L=$($newConfig.marginLeft) R=$($newConfig.marginRight)mm`nForma continua: $($newConfig.continuousForm)`nPatron: $($newConfig.usePattern)`nAPI: $($newConfig.webEnabled)",
+        "Configuracion guardada. Monitor reiniciado con la nueva configuracion.`n`nImpresora: $($newConfig.printer)`nCopias: $($newConfig.copies)`nOrientacion: $($newConfig.orientation)`nPaper: $($newConfig.paperSize)`nEscala: $($newConfig.scale)%`nDPI: $($newConfig.dpi)`nMotor: $($newConfig.renderEngine)`nForma continua: $($newConfig.continuousForm)`nPatron: $($newConfig.usePattern)`nAPI: $($newConfig.webEnabled)",
         "Guardado", "OK", "Information"
     )
 })
