@@ -3,7 +3,7 @@
     LidaPrint - Monitor de impresion automatica de facturas Odoo.
 .DESCRIPTION
     Vigila carpeta local y/o recibe archivos via HTTP.
-    Imprime con SumatraPDF y elimina el archivo.
+    Imprime con Ghostscript y elimina el archivo.
     La API permite a Odoo controlar que archivos se imprimen.
 .NOTES
     Se ejecuta via Task Scheduler al iniciar sesion.
@@ -66,13 +66,6 @@ function Resolve-ToolPath {
     return $null
 }
 
-$sumatraResolved = Resolve-ToolPath $config.sumatraPath @(
-    (Join-Path $scriptDir "bin\SumatraPDF.exe"),
-    "$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe",
-    "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe",
-    "${env:ProgramFiles(x86)}\SumatraPDF\SumatraPDF.exe"
-)
-
 # Ghostscript: consola de 64 bits (gswin64c) o 32 (gswin32c)
 $gsCandidates = @()
 $gsCandidates += (Join-Path $scriptDir "bin\gswin64c.exe")
@@ -89,8 +82,8 @@ if (-not $config.printer) {
     Write-BootLog "No hay impresora configurada - abortando. Abre el Configurator, elige impresora y Guardar." "ERROR"
     Start-Sleep 10; exit 1
 }
-if (-not $sumatraResolved -and -not $gsResolved) {
-    Write-BootLog "Ni SumatraPDF ni Ghostscript encontrados - abortando. Re-ejecuta el instalador." "ERROR"
+if (-not $gsResolved) {
+    Write-BootLog "Ghostscript no encontrado - abortando. Re-ejecuta el instalador." "ERROR"
     Start-Sleep 10; exit 1
 }
 if (-not $config.downloadFolder) {
@@ -147,45 +140,6 @@ function Invoke-ProcessCapture {
     $code = $proc.ExitCode
     $proc.Dispose()
     return $code
-}
-
-function Invoke-PrintSumatra {
-    param([string]$filePath)
-    $fileName = Split-Path $filePath -Leaf
-    $settings = @()
-    $settings += "$($config.copies)x"
-    if ($config.orientation) { $settings += $config.orientation }
-
-    if ($config.useCustomPaper) {
-        $wPts = [math]::Round($config.paperWidth * 2.835)
-        $hPts = [math]::Round($config.paperHeight * 2.835)
-        $settings += "paper=${wPts}x${hPts}"
-    } elseif ($config.continuousForm) {
-        $wPts = [math]::Round(210 * 2.835)
-        $hPts = [math]::Round($config.formLength * 2.835)
-        $settings += "paper=${wPts}x${hPts}"
-    } elseif ($config.paperSize -and $config.paperSize -notin @("Custom","Continuo")) {
-        $settings += "paper=$($config.paperSize)"
-    }
-
-    if ($config.scale -and $config.scale -ne 100) { $settings += "scale=$($config.scale)" }
-    $settingsStr = $settings -join ","
-
-    $exitCode = Invoke-ProcessCapture $sumatraResolved "-silent -print-to `"$($config.printer)`" -print-settings `"$settingsStr`" `"$filePath`""
-
-    if ($exitCode -eq 0) {
-        return @{ Success = $true; Message = "Impreso (Sumatra): $fileName -> $($config.printer) [$settingsStr]" }
-    } else {
-        $reason = switch ($exitCode) {
-            2 { "No se pudo abrir el archivo" }
-            3 { "El documento no permite impresion" }
-            4 { "Impresora no encontrada" }
-            5 { "Error del driver" }
-            6 { "Impresion deshabilitada" }
-            default { "Error desconocido: $exitCode" }
-        }
-        return @{ Success = $false; Message = "Error imprimiendo $fileName - $reason" }
-    }
 }
 
 function Get-PaperPoints {
@@ -274,17 +228,7 @@ function Invoke-PrintGhostscript {
 
 function Invoke-Print {
     param([string]$filePath)
-    # Motor segun configuracion, con fallback cruzado si el elegido no esta.
-    if ($config.renderEngine -eq "ghostscript") {
-        if ($gsResolved) { return Invoke-PrintGhostscript $filePath }
-        Write-Log "Ghostscript configurado pero no encontrado. Fallback a SumatraPDF." "WARN"
-    }
-    if ($sumatraResolved) { return Invoke-PrintSumatra $filePath }
-    if ($gsResolved) {
-        Write-Log "SumatraPDF no encontrado. Usando Ghostscript." "WARN"
-        return Invoke-PrintGhostscript $filePath
-    }
-    return @{ Success = $false; Message = "Ningun motor de impresion disponible" }
+    return Invoke-PrintGhostscript $filePath
 }
 
 function Remove-Invoice {
@@ -569,9 +513,7 @@ Write-Log "Margenes:     T=$($config.marginTop) B=$($config.marginBottom) L=$($c
 Write-Log "Forma cont.:  $($config.continuousForm) (largo=$($config.formLength)mm)"
 Write-Log "Descargas:    $($config.downloadFolder)"
 Write-Log "Patron:       $($config.invoicePattern) (activo: $($config.usePattern))"
-Write-Log "Motor:        $(if ($config.renderEngine -eq 'ghostscript') { 'Ghostscript' } else { 'SumatraPDF' })"
-Write-Log "SumatraPDF:   $(if ($sumatraResolved) { $sumatraResolved } else { 'no encontrado' })"
-Write-Log "Ghostscript:  $(if ($gsResolved) { $gsResolved } else { 'no encontrado' })"
+Write-Log "Motor:        Ghostscript ($gsResolved)"
 Write-Log "Web HTTP:     $($config.webEnabled) (puerto $($config.webPort))"
 Write-Log "========================================"
 

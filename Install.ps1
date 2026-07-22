@@ -4,8 +4,7 @@
 .DESCRIPTION
     - Instala a una ubicacion ESTABLE: %LOCALAPPDATA%\LidaPrint.
       Mover o borrar la carpeta descargada no rompe la instalacion.
-    - Verifica/instala SumatraPDF (por usuario, sin admin).
-    - Verifica/instala Ghostscript (motor de alta calidad; puede pedir UAC).
+    - Verifica/instala Ghostscript, el motor de impresion (puede pedir UAC).
     - Crea la tarea programada LidaPrint (nivel usuario, sin admin).
     - Abre el Configurator al terminar.
 .NOTES
@@ -17,7 +16,6 @@ $ErrorActionPreference = "Stop"
 # ===================== CONFIGURACION =====================
 $installPath = Join-Path $env:LOCALAPPDATA "LidaPrint"
 $taskName    = "LidaPrint"
-$sumatraUrl  = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64-install.exe"
 $gsUrl       = "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10031/gs10031w64.exe"
 
 function Write-Step { param([string]$msg) Write-Host "`n[*] " -ForegroundColor Cyan -NoNewline; Write-Host $msg }
@@ -68,35 +66,9 @@ if ($scriptDir -ne $installPath) {
     Write-OK "Ejecutando desde la carpeta de instalacion, copia omitida"
 }
 
-# ===================== 3. SUMATRAPDF =====================
-Write-Step "Verificando SumatraPDF..."
-$sumatraPaths = @(
-    "$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe",
-    "${env:ProgramFiles}\SumatraPDF\SumatraPDF.exe",
-    "${env:ProgramFiles(x86)}\SumatraPDF\SumatraPDF.exe"
-)
-$sumatraPath = $sumatraPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-if ($sumatraPath) {
-    Write-OK "SumatraPDF encontrado: $sumatraPath"
-} else {
-    Write-Warn "SumatraPDF no encontrado. Descargando (instalacion por usuario, sin admin)..."
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $tempInstaller = Join-Path $env:TEMP "SumatraPDF-Installer.exe"
-        Invoke-WebRequest -Uri $sumatraUrl -OutFile $tempInstaller -UseBasicParsing
-        Start-Process -FilePath $tempInstaller -ArgumentList "-s" -Wait
-        Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
-        $sumatraPath = $sumatraPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-    } catch {
-        Write-Warn "Descarga de SumatraPDF fallo: $_"
-    }
-    if ($sumatraPath) { Write-OK "SumatraPDF instalado: $sumatraPath" }
-    else { Write-Warn "SumatraPDF no disponible. Ghostscript sera el unico motor." }
-}
-
-# ===================== 4. GHOSTSCRIPT =====================
-Write-Step "Verificando Ghostscript (motor de alta calidad)..."
+# ===================== 3. GHOSTSCRIPT (MOTOR DE IMPRESION) =====================
+Write-Step "Verificando Ghostscript (motor de impresion)..."
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 function Find-Gs {
     foreach ($base in @("$env:ProgramFiles\gs", "${env:ProgramFiles(x86)}\gs", "$env:LOCALAPPDATA\Programs\gs")) {
         if (Test-Path $base) {
@@ -131,11 +103,10 @@ if ($gsPath) {
         }
     }
     if ($gsPath) { Write-OK "Ghostscript instalado: $gsPath" }
-    else { Write-Warn "Ghostscript no disponible. El motor de alta calidad queda desactivado (SumatraPDF sigue funcionando)." }
 }
 
-if (-not $sumatraPath -and -not $gsPath) {
-    Write-Fail "No se pudo instalar ningun motor de impresion. Revisa tu conexion e intenta de nuevo."
+if (-not $gsPath) {
+    Write-Fail "Ghostscript es el motor de impresion y no pudo instalarse. Revisa tu conexion o instalalo desde ghostscript.com e intenta de nuevo."
     pause
     exit 1
 }
@@ -145,7 +116,6 @@ Write-Step "Actualizando config.json..."
 $configPath = Join-Path $installPath "config.json"
 if (Test-Path $configPath) {
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
-    if ($sumatraPath) { $config.sumatraPath = $sumatraPath }
     if ($gsPath) {
         if ($null -eq $config.gsPath) { $config | Add-Member -NotePropertyName gsPath -NotePropertyValue $gsPath -Force }
         else { $config.gsPath = $gsPath }
@@ -231,8 +201,7 @@ Write-Host "  INSTALACION COMPLETADA" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Instalado en: $installPath"
-Write-Host "  SumatraPDF:   $(if ($sumatraPath) { $sumatraPath } else { 'no instalado' })"
-Write-Host "  Ghostscript:  $(if ($gsPath) { $gsPath } else { 'no instalado' })"
+Write-Host "  Ghostscript:  $gsPath"
 Write-Host "  Tarea:        $taskName $(if ($taskRegistered) { '(monitor corriendo)' } else { '' })"
 Write-Host "  Consola:      escribe 'lidaprint' (en una consola nueva) para abrir el Configurator"
 Write-Host ""

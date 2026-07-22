@@ -5,7 +5,7 @@ title LidaPrint - Instalador
 :: ============================================================
 ::  LidaPrint - Instalador
 ::  Doble clic para instalar. Instala a %LOCALAPPDATA%\LidaPrint
-::  (no requiere Administrador), instala SumatraPDF y Ghostscript,
+::  (no requiere Administrador), instala Ghostscript,
 ::  crea la tarea programada y abre el Configurator al terminar.
 ::  Delega todo el trabajo en Install.ps1.
 :: ============================================================

@@ -27,7 +27,7 @@ function Load-Config {
             useCustomPaper = $false; scale = 100; dpi = 300
             marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
             continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
-            sumatraPath = ""; gsPath = ""; renderEngine = "sumatra"; renderAsImage = $false
+            gsPath = ""; renderAsImage = $false
             downloadFolder = ""; installPath = ""
             autoStart = $true; enableLogging = $true
             usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
@@ -57,17 +57,7 @@ function Save-Config {
 
 $config = Load-Config
 
-# ===================== DETECTAR MOTORES DE IMPRESION =====================
-function Find-Sumatra {
-    foreach ($p in @(
-        (Join-Path $scriptDir "bin\SumatraPDF.exe"),
-        "$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe",
-        "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe",
-        "${env:ProgramFiles(x86)}\SumatraPDF\SumatraPDF.exe"
-    )) { if (Test-Path $p) { return $p } }
-    return ""
-}
-
+# ===================== DETECTAR MOTOR DE IMPRESION =====================
 function Find-Ghostscript {
     $local = Join-Path $scriptDir "bin\gswin64c.exe"
     if (Test-Path $local) { return $local }
@@ -548,32 +538,15 @@ $tQ.Text = "Calidad"
 Set-DarkTheme $tQ
 
 $grpEngine = New-Object System.Windows.Forms.GroupBox
-$grpEngine.Text = "Motor de impresion"
+$grpEngine.Text = "Motor de impresion: Ghostscript"
 $grpEngine.Location = New-Object System.Drawing.Point(10, 10)
-$grpEngine.Size = New-Object System.Drawing.Size(590, 120)
+$grpEngine.Size = New-Object System.Drawing.Size(590, 90)
 Set-DarkTheme $grpEngine
 $tQ.Controls.Add($grpEngine)
 
-$lblEngine = New-Object System.Windows.Forms.Label
-$lblEngine.Text = "Motor:"
-$lblEngine.Location = New-Object System.Drawing.Point(10, 25)
-$lblEngine.Size = New-Object System.Drawing.Size(50, 20)
-Set-DarkTheme $lblEngine
-$grpEngine.Controls.Add($lblEngine)
-
-$cmbEngine = New-Object System.Windows.Forms.ComboBox
-$cmbEngine.Location = New-Object System.Drawing.Point(70, 23)
-$cmbEngine.Size = New-Object System.Drawing.Size(280, 21)
-$cmbEngine.DropDownStyle = "DropDownList"
-[void]$cmbEngine.Items.Add("SumatraPDF (rapido)")
-[void]$cmbEngine.Items.Add("Ghostscript (alta calidad, DPI exacto)")
-if ($config.renderEngine -eq "ghostscript") { $cmbEngine.SelectedIndex = 1 } else { $cmbEngine.SelectedIndex = 0 }
-Set-DarkTheme $cmbEngine
-$grpEngine.Controls.Add($cmbEngine)
-
 $chkRenderImage = New-Object System.Windows.Forms.CheckBox
 $chkRenderImage.Text = "Suavizado maximo de texto y graficos (renderizar como imagen)"
-$chkRenderImage.Location = New-Object System.Drawing.Point(10, 52)
+$chkRenderImage.Location = New-Object System.Drawing.Point(10, 22)
 $chkRenderImage.Size = New-Object System.Drawing.Size(420, 20)
 $chkRenderImage.Checked = [bool]$config.renderAsImage
 Set-DarkTheme $chkRenderImage
@@ -581,13 +554,13 @@ $grpEngine.Controls.Add($chkRenderImage)
 
 $lblGs = New-Object System.Windows.Forms.Label
 $lblGs.Text = "Ghostscript:"
-$lblGs.Location = New-Object System.Drawing.Point(10, 82)
+$lblGs.Location = New-Object System.Drawing.Point(10, 52)
 $lblGs.Size = New-Object System.Drawing.Size(75, 20)
 Set-DarkTheme $lblGs
 $grpEngine.Controls.Add($lblGs)
 
 $txtGs = New-Object System.Windows.Forms.TextBox
-$txtGs.Location = New-Object System.Drawing.Point(90, 80)
+$txtGs.Location = New-Object System.Drawing.Point(90, 50)
 $txtGs.Size = New-Object System.Drawing.Size(330, 20)
 $txtGs.Text = if ($config.gsPath) { $config.gsPath } else { Find-Ghostscript }
 Set-DarkTheme $txtGs
@@ -595,7 +568,7 @@ $grpEngine.Controls.Add($txtGs)
 
 $btnBrowseGs = New-Object System.Windows.Forms.Button
 $btnBrowseGs.Text = "..."
-$btnBrowseGs.Location = New-Object System.Drawing.Point(430, 79)
+$btnBrowseGs.Location = New-Object System.Drawing.Point(430, 49)
 $btnBrowseGs.Size = New-Object System.Drawing.Size(45, 23)
 $btnBrowseGs.Add_Click({
     $ofd = New-Object System.Windows.Forms.OpenFileDialog
@@ -607,7 +580,7 @@ $grpEngine.Controls.Add($btnBrowseGs)
 
 $btnDetectGs = New-Object System.Windows.Forms.Button
 $btnDetectGs.Text = "Detectar"
-$btnDetectGs.Location = New-Object System.Drawing.Point(480, 79)
+$btnDetectGs.Location = New-Object System.Drawing.Point(480, 49)
 $btnDetectGs.Size = New-Object System.Drawing.Size(90, 23)
 $btnDetectGs.Add_Click({
     $found = Find-Ghostscript
@@ -619,7 +592,7 @@ $grpEngine.Controls.Add($btnDetectGs)
 
 $grpConv = New-Object System.Windows.Forms.GroupBox
 $grpConv.Text = "Conversor DPI / pixeles (para forma continua)"
-$grpConv.Location = New-Object System.Drawing.Point(10, 140)
+$grpConv.Location = New-Object System.Drawing.Point(10, 110)
 $grpConv.Size = New-Object System.Drawing.Size(590, 110)
 Set-DarkTheme $grpConv
 $tQ.Controls.Add($grpConv)
@@ -718,8 +691,8 @@ $nudCvDpi2.Add_ValueChanged($updateConv)
 & $updateConv
 
 $lblQHint = New-Object System.Windows.Forms.Label
-$lblQHint.Text = "Si el PDF se ve bien en pantalla pero imprime mal, usa Ghostscript: rasteriza la pagina al DPI exacto de la impresora (203 en matriciales / forma continua) y la envia ya renderizada, sin depender del driver."
-$lblQHint.Location = New-Object System.Drawing.Point(12, 258)
+$lblQHint.Text = "Ghostscript rasteriza cada pagina al DPI exacto configurado (203 en matriciales / forma continua) y la envia ya renderizada, sin depender de como el driver interprete las fuentes. Si el texto imprime borroso, activa el suavizado maximo."
+$lblQHint.Location = New-Object System.Drawing.Point(12, 228)
 $lblQHint.Size = New-Object System.Drawing.Size(585, 50)
 Set-DarkTheme $lblQHint
 $tQ.Controls.Add($lblQHint)
@@ -801,42 +774,9 @@ $chkUsePattern.Checked = $config.usePattern
 Set-DarkTheme $chkUsePattern
 $grpFiles.Controls.Add($chkUsePattern)
 
-$grpSumatra = New-Object System.Windows.Forms.GroupBox
-$grpSumatra.Text = "SumatraPDF"
-$grpSumatra.Location = New-Object System.Drawing.Point(10, 120)
-$grpSumatra.Size = New-Object System.Drawing.Size(590, 50)
-Set-DarkTheme $grpSumatra
-$t4.Controls.Add($grpSumatra)
-
-$lblSumatra = New-Object System.Windows.Forms.Label
-$lblSumatra.Text = "Ruta:"
-$lblSumatra.Location = New-Object System.Drawing.Point(10, 22)
-$lblSumatra.Size = New-Object System.Drawing.Size(40, 20)
-Set-DarkTheme $lblSumatra
-$grpSumatra.Controls.Add($lblSumatra)
-
-$txtSumatra = New-Object System.Windows.Forms.TextBox
-$txtSumatra.Location = New-Object System.Drawing.Point(60, 20)
-$txtSumatra.Size = New-Object System.Drawing.Size(420, 20)
-$txtSumatra.Text = if ($config.sumatraPath -and (Test-Path $config.sumatraPath)) { $config.sumatraPath } else { Find-Sumatra }
-Set-DarkTheme $txtSumatra
-$grpSumatra.Controls.Add($txtSumatra)
-
-$btnBrowseSum = New-Object System.Windows.Forms.Button
-$btnBrowseSum.Text = "..."
-$btnBrowseSum.Location = New-Object System.Drawing.Point(490, 18)
-$btnBrowseSum.Size = New-Object System.Drawing.Size(80, 23)
-$btnBrowseSum.Add_Click({
-    $ofd = New-Object System.Windows.Forms.OpenFileDialog
-    $ofd.Filter = "SumatraPDF|SumatraPDF.exe"
-    if ($ofd.ShowDialog() -eq "OK") { $txtSumatra.Text = $ofd.FileName }
-})
-Set-DarkTheme $btnBrowseSum
-$grpSumatra.Controls.Add($btnBrowseSum)
-
 $grpWeb = New-Object System.Windows.Forms.GroupBox
 $grpWeb.Text = "Conexion Web (API)"
-$grpWeb.Location = New-Object System.Drawing.Point(10, 180)
+$grpWeb.Location = New-Object System.Drawing.Point(10, 120)
 $grpWeb.Size = New-Object System.Drawing.Size(590, 100)
 Set-DarkTheme $grpWeb
 $t4.Controls.Add($grpWeb)
@@ -992,8 +932,8 @@ $btnTest.FlatStyle = "Flat"
 $btnTest.FlatAppearance.BorderColor = $dkBorder
 $btnTest.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(78, 110, 160)
 $btnTest.Add_Click({
-    if (-not $txtSumatra.Text -or -not (Test-Path $txtSumatra.Text)) {
-        [System.Windows.Forms.MessageBox]::Show("SumatraPDF no encontrado.", "Error", "OK", "Error"); return
+    if (-not $txtGs.Text -or -not (Test-Path $txtGs.Text)) {
+        [System.Windows.Forms.MessageBox]::Show("Ghostscript no encontrado. Usa 'Detectar' en la pestana Calidad o re-ejecuta el instalador.", "Error", "OK", "Error"); return
     }
     if (-not $cmbPrinter.SelectedItem) {
         [System.Windows.Forms.MessageBox]::Show("Seleccione una impresora.", "Error", "OK", "Error"); return
@@ -1025,30 +965,22 @@ startxref
 "@
     Set-Content -Path $testPdf -Value $testContent -Encoding ASCII
 
-    $settings = @("1x")
-    if ($cmbOrient.SelectedItem) { $settings += $cmbOrient.SelectedItem }
-    if ($chkCustom.Checked) {
-        $wPts = [math]::Round($nudWidth.Value * 2.835)
-        $hPts = [math]::Round($nudHeight.Value * 2.835)
-        $settings += "paper=${wPts}x${hPts}"
-    } elseif ($cmbPaper.SelectedItem -and $cmbPaper.SelectedItem -notin @("Custom","Continuo")) {
-        $settings += "paper=$($cmbPaper.SelectedItem)"
-    }
-    if ($nudScale.Value -ne 100) { $settings += "scale=$($nudScale.Value)" }
-    $settingsStr = $settings -join ","
+    # Prueba con Ghostscript (mismo motor que usa el monitor)
+    $dpiTest = if ($cmbDPI.SelectedItem) { $cmbDPI.SelectedItem } else { "300" }
+    $gsTestArgs = "-dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r$dpiTest -dNumCopies=1 `"-sOutputFile=%printer%$($cmbPrinter.SelectedItem)`" -f `"$testPdf`""
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $txtSumatra.Text
-    $psi.Arguments = "-silent -print-to `"$($cmbPrinter.SelectedItem)`" -print-settings `"$settingsStr`" `"$testPdf`""
+    $psi.FileName = $txtGs.Text
+    $psi.Arguments = $gsTestArgs
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
         $proc.WaitForExit()
         if ($proc.ExitCode -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show("Prueba enviada a $($cmbPrinter.SelectedItem)`nSettings: $settingsStr", "Exito", "OK", "Information")
+            [System.Windows.Forms.MessageBox]::Show("Prueba enviada a $($cmbPrinter.SelectedItem) (Ghostscript ${dpiTest}dpi)", "Exito", "OK", "Information")
         } else {
-            [System.Windows.Forms.MessageBox]::Show("Error de impresion. Codigo: $($proc.ExitCode)", "Error", "OK", "Error")
+            [System.Windows.Forms.MessageBox]::Show("Error de impresion. Codigo Ghostscript: $($proc.ExitCode)", "Error", "OK", "Error")
         }
     } catch { [System.Windows.Forms.MessageBox]::Show("Error: $_", "Error", "OK", "Error") }
     Remove-Item $testPdf -Force -ErrorAction SilentlyContinue
@@ -1073,9 +1005,8 @@ $btnSave.Add_Click({
     if (-not $txtDownloads.Text -or -not (Test-Path $txtDownloads.Text)) {
         [System.Windows.Forms.MessageBox]::Show("La carpeta de descargas no existe o no es accesible.", "Error", "OK", "Error"); return
     }
-    # SumatraPDF solo es obligatorio si es el motor elegido (con Ghostscript queda como fallback opcional)
-    if ($cmbEngine.SelectedIndex -eq 0 -and (-not $txtSumatra.Text -or -not (Test-Path $txtSumatra.Text))) {
-        [System.Windows.Forms.MessageBox]::Show("La ruta de SumatraPDF no es valida.", "Error", "OK", "Error"); return
+    if (-not $txtGs.Text -or -not (Test-Path $txtGs.Text)) {
+        [System.Windows.Forms.MessageBox]::Show("La ruta de Ghostscript no es valida. Usa 'Detectar' en la pestana Calidad o re-ejecuta el instalador.", "Error", "OK", "Error"); return
     }
     if ($chkUsePattern.Checked) {
         try { [void][regex]::new($txtPattern.Text) }
@@ -1109,9 +1040,7 @@ $btnSave.Add_Click({
         formLength     = [int]$nudFormLen.Value
         topOffset      = [int]$nudTopOff.Value
         linePitch      = [decimal]$nudLinePitch.Value
-        sumatraPath    = $txtSumatra.Text
         gsPath         = $txtGs.Text
-        renderEngine   = $(if ($cmbEngine.SelectedIndex -eq 1) { "ghostscript" } else { "sumatra" })
         renderAsImage  = $chkRenderImage.Checked
         downloadFolder = $txtDownloads.Text
         installPath    = $scriptDir
@@ -1122,10 +1051,6 @@ $btnSave.Add_Click({
         webEnabled     = $chkWeb.Checked
         webPort        = [int]$nudPort.Value
         webApiKey      = $txtApiKey.Text
-    }
-
-    if ($cmbEngine.SelectedIndex -eq 1 -and -not (Test-Path $txtGs.Text)) {
-        [System.Windows.Forms.MessageBox]::Show("Elegiste Ghostscript como motor pero la ruta no es valida. Usa 'Detectar' o instala Ghostscript.", "Error", "OK", "Error"); return
     }
 
     Save-Config $newConfig
@@ -1179,7 +1104,7 @@ $btnSave.Add_Click({
     }
 
     [System.Windows.Forms.MessageBox]::Show(
-        "Configuracion guardada. Monitor reiniciado con la nueva configuracion.`n`nImpresora: $($newConfig.printer)`nCopias: $($newConfig.copies)`nOrientacion: $($newConfig.orientation)`nPaper: $($newConfig.paperSize)`nEscala: $($newConfig.scale)%`nDPI: $($newConfig.dpi)`nMotor: $($newConfig.renderEngine)`nForma continua: $($newConfig.continuousForm)`nPatron: $($newConfig.usePattern)`nAPI: $($newConfig.webEnabled)",
+        "Configuracion guardada. Monitor reiniciado con la nueva configuracion.`n`nImpresora: $($newConfig.printer)`nCopias: $($newConfig.copies)`nOrientacion: $($newConfig.orientation)`nPaper: $($newConfig.paperSize)`nEscala: $($newConfig.scale)%`nDPI: $($newConfig.dpi)`nMotor: Ghostscript`nForma continua: $($newConfig.continuousForm)`nPatron: $($newConfig.usePattern)`nAPI: $($newConfig.webEnabled)",
         "Guardado", "OK", "Information"
     )
 })

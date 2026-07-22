@@ -75,5 +75,5 @@ Write-Host "Descarga completa. Ejecutando el instalador..." -ForegroundColor Gre
 Write-Host ""
 
 # Install.ps1 detecta que corre desde la carpeta de instalacion (no re-copia),
-# instala SumatraPDF + Ghostscript, registra la tarea y abre el Configurator.
+# instala Ghostscript, registra la tarea y abre el Configurator (solo primera vez).
 & powershell.exe -ExecutionPolicy Bypass -File (Join-Path $installPath "Install.ps1")

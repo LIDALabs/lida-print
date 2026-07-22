@@ -5,7 +5,7 @@
     Elimina la tarea programada, la instalacion actual, la instalacion
     vieja (si existe) y la entrada del PATH del usuario. Es idempotente:
     se puede correr aunque algo ya no exista, no falla.
-    No desinstala SumatraPDF ni Ghostscript (una reinstalacion los reutiliza).
+    No desinstala Ghostscript (una reinstalacion lo reutiliza).
 .NOTES
     Uso (PowerShell, sin admin):
       irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/uninstall.ps1 | iex
@@ -70,6 +70,7 @@ if ($p) {
 
 Write-Host ""
 Write-Host "Desinstalacion completa." -ForegroundColor Green
-Write-Host "SumatraPDF y Ghostscript NO se eliminaron (una reinstalacion los reutiliza)." -ForegroundColor Gray
-Write-Host "Para quitarlos: winget uninstall SumatraPDF.SumatraPDF ; winget uninstall ArtifexSoftware.GhostScript" -ForegroundColor Gray
+Write-Host "Ghostscript NO se elimino (una reinstalacion lo reutiliza)." -ForegroundColor Gray
+Write-Host "Para quitarlo: winget uninstall ArtifexSoftware.GhostScript" -ForegroundColor Gray
+Write-Host "Si tenias SumatraPDF de versiones anteriores: winget uninstall SumatraPDF.SumatraPDF" -ForegroundColor Gray
 Write-Host ""
