@@ -188,6 +188,24 @@ function Invoke-PrintSumatra {
     }
 }
 
+function Get-PaperPoints {
+    # Dimensiones del papel en puntos PostScript (1 mm = 2.835 pt)
+    if ($config.useCustomPaper) {
+        return @([math]::Round($config.paperWidth * 2.835), [math]::Round($config.paperHeight * 2.835))
+    }
+    if ($config.continuousForm) {
+        return @([math]::Round(210 * 2.835), [math]::Round($config.formLength * 2.835))
+    }
+    switch ($config.paperSize) {
+        "A4"      { return @(595, 842) }
+        "Letter"  { return @(612, 792) }
+        "Legal"   { return @(612, 1008) }
+        "Tabloid" { return @(792, 1224) }
+        "A5"      { return @(420, 595) }
+        default   { return @(595, 842) }
+    }
+}
+
 function Invoke-PrintGhostscript {
     # Rasteriza el PDF al DPI configurado y lo envia via el driver de Windows
     # (device mswinpr2). Esto arregla los casos donde el PDF se ve bien en
@@ -209,19 +227,41 @@ function Invoke-PrintGhostscript {
         $gsArgs += @("-dTextAlphaBits=4", "-dGraphicsAlphaBits=4")
     }
 
-    # Papel personalizado o forma continua: fijar el medio en puntos
-    if ($config.useCustomPaper -or $config.continuousForm) {
-        $wMm = if ($config.useCustomPaper) { $config.paperWidth } else { 210 }
-        $hMm = if ($config.useCustomPaper) { $config.paperHeight } else { $config.formLength }
-        $wPts = [math]::Round($wMm * 2.835)
-        $hPts = [math]::Round($hMm * 2.835)
-        $gsArgs += @("-dDEVICEWIDTHPOINTS=$wPts", "-dDEVICEHEIGHTPOINTS=$hPts", "-dFIXEDMEDIA", "-dFitPage")
+    # Tamano del medio SIEMPRE explicito (tambien para A4/Letter/etc.: sin esto
+    # Ghostscript usaba el papel por defecto del driver e ignoraba la config).
+    $paper = Get-PaperPoints
+    $wPts = $paper[0]; $hPts = $paper[1]
+    if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
+    $gsArgs += @("-dDEVICEWIDTHPOINTS=$wPts", "-dDEVICEHEIGHTPOINTS=$hPts", "-dFIXEDMEDIA", "-dFitPage")
+
+    # Margenes + desplazamiento superior + escala del usuario, via BeginPage:
+    # el contenido se traslada al origen del area util (izq/abajo) y se escala
+    # para caber dentro de los margenes. topOffset suma al margen superior.
+    $mL = [double]$config.marginLeft   * 2.835
+    $mR = [double]$config.marginRight  * 2.835
+    $mT = [double]$config.marginTop    * 2.835
+    $mB = [double]$config.marginBottom * 2.835
+    if ($config.continuousForm -and $config.topOffset) { $mT += [double]$config.topOffset * 2.835 }
+    $userScale = 1.0
+    if ($config.scale -and $config.scale -ne 100) { $userScale = [double]$config.scale / 100.0 }
+
+    $pageCmd = $null
+    if (($mL + $mR + $mT + $mB) -gt 0 -or $userScale -ne 1.0) {
+        $sx = ($wPts - $mL - $mR) / $wPts
+        $sy = ($hPts - $mT - $mB) / $hPts
+        $s = [math]::Round([math]::Min($sx, $sy) * $userScale, 4)
+        if ($s -le 0) { $s = 0.1 }  # margenes absurdos: no romper, imprimir chico
+        $offX = [math]::Round($mL, 2)
+        $offY = [math]::Round($mB, 2)
+        $pageCmd = "<< /BeginPage { pop $offX $offY translate $s $s scale } >> setpagedevice"
     }
 
     $gsArgs += "-sOutputFile=%printer%$($config.printer)"
+    if ($pageCmd) { $gsArgs += "-c"; $gsArgs += $pageCmd }
     $gsArgs += "-f"
-    $gsArgs += "`"$filePath`""
-    $argStr = ($gsArgs | ForEach-Object { if ($_ -match '^-sOutputFile=') { "`"$_`"" } else { $_ } }) -join " "
+    $gsArgs += $filePath
+    # Quotear todo argumento con espacios (bloque -c, OutputFile, ruta del PDF)
+    $argStr = ($gsArgs | ForEach-Object { if ($_ -match '\s' -or $_ -match '^-sOutputFile=') { "`"$_`"" } else { $_ } }) -join " "
 
     $exitCode = Invoke-ProcessCapture $gsResolved $argStr
 

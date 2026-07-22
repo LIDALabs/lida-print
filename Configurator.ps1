@@ -391,7 +391,7 @@ $grpPaper.Controls.Add($lblmm)
 $chkCustom.Add_CheckedChanged({ $nudWidth.Enabled = $chkCustom.Checked; $nudHeight.Enabled = $chkCustom.Checked })
 
 $grpMargins = New-Object System.Windows.Forms.GroupBox
-$grpMargins.Text = "Margenes (mm) - referencia visual, se aplican desde la impresora"
+$grpMargins.Text = "Margenes (mm) - se aplican con el motor Ghostscript (pestana Calidad)"
 $grpMargins.Location = New-Object System.Drawing.Point(10, 120)
 $grpMargins.Size = New-Object System.Drawing.Size(590, 70)
 Set-DarkTheme $grpMargins

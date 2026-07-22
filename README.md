@@ -169,9 +169,12 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 | Paper Size | A4, Letter, Legal, Tabloid, A5, Continuo, Custom | A4 |
 | Tamano personalizado | Habilita ancho/alto manual | desactivado |
 | Ancho / Alto | En mm (50-2000) | 210 / 297 |
-| Margenes | Superior/Inferior/Izq/Der en mm — **referencia visual** (ver nota) | 0 |
+| Margenes | Superior/Inferior/Izq/Der en mm — aplicados por **Ghostscript** | 0 |
 
-> **Nota sobre margenes:** SumatraPDF no aplica margenes por linea de comandos. Los campos quedan como referencia; los margenes reales se controlan desde la configuracion de la impresora en Windows.
+> **Nota sobre margenes:** los margenes (y el desplazamiento superior de forma continua)
+> se aplican **solo con el motor Ghostscript** (pestana Calidad): el contenido se traslada
+> y escala para caber dentro del area util. SumatraPDF no soporta margenes por CLI — con
+> ese motor se ignoran (limitacion del motor, no de LidaPrint).
 
 ### Pestana 3: Forma Continua
 
@@ -290,11 +293,11 @@ y dejo de imprimir".
 | `useCustomPaper` | bool | Usa dimensiones manuales |
 | `scale` | int | Escala en % |
 | `dpi` | int | Resolucion |
-| `marginTop/Bottom/Left/Right` | int | Referencia visual (no aplicados por CLI) |
+| `marginTop/Bottom/Left/Right` | int | Margenes en mm — aplicados con motor Ghostscript (Sumatra los ignora) |
 | `continuousForm` | bool | Modo papel continuo |
 | `formLength` | int | Largo del formulario en mm |
-| `topOffset` | int | Desplazamiento superior en mm |
-| `linePitch` | decimal | Interlineado en mm |
+| `topOffset` | int | Desplazamiento superior en mm (forma continua, motor Ghostscript) |
+| `linePitch` | decimal | Informativo — no aplicable a PDFs (es un concepto de impresoras de linea) |
 | `sumatraPath` | string | Ruta a SumatraPDF. Si esta vacia o quedo obsoleta, **se re-resuelve sola** en runtime |
 | `gsPath` | string | Ruta a Ghostscript (`gswin64c.exe`). Tambien auto-resuelta en runtime |
 | `renderEngine` | string | `sumatra` (rapido) o `ghostscript` (alta calidad, DPI exacto) |
@@ -494,6 +497,23 @@ gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumC
 
 **Fallback automatico:** si el motor configurado no esta instalado, LidaPrint usa el otro
 y lo registra en el log como WARN. Si no hay ninguno, el monitor no arranca.
+
+### Que soporta cada motor
+
+| Funcionalidad | SumatraPDF | Ghostscript |
+|---------------|------------|-------------|
+| Impresora, copias | Si | Si |
+| Orientacion | Si | Si |
+| Paper size (A4, Letter, ...) | Si | Si |
+| Papel personalizado / forma continua | Si | Si |
+| Escala (%) | Si | Si |
+| **Margenes** | No (limite del CLI) | **Si** |
+| Desplazamiento superior (forma continua) | No | **Si** |
+| DPI de rasterizado | No (limite del CLI) | **Si** |
+| Suavizado maximo (render como imagen) | No | **Si** |
+
+> Regla practica: si usas margenes, DPI, forma continua o el PDF imprime feo,
+> el motor es **Ghostscript**. SumatraPDF es el camino rapido para A4/Letter simples.
 
 ---
 
