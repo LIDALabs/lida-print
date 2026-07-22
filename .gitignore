@@ -1,0 +1,25 @@
+# Logs (se generan en runtime)
+logs/
+*.log
+
+# Compilados / builds
+*.exe
+
+# Temporales y backups
+*.tmp
+*.bak
+*.swp
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+
+# Editores / IDE
+.vscode/
+.idea/
