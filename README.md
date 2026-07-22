@@ -8,7 +8,7 @@ Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y 
 
 ```
 lida-print/
-├── DOCUMENTACION.md         ← Este archivo
+├── README.md                ← Este archivo (documentacion completa)
 ├── web-install.ps1          ← Instalacion web en un comando (curl / irm)
 ├── Instalador.bat           ← Doble clic para instalar (no requiere admin)
 ├── Install.ps1              ← Logica de instalacion (la corren ambos de arriba)

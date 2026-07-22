@@ -27,7 +27,7 @@ $files = @(
     "LidaPrint.bat",
     "LidaPrint.vbs",
     "logo.png",
-    "DOCUMENTACION.md"
+    "README.md"
 )
 
 Write-Host ""

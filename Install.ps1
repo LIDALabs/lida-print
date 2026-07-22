@@ -44,7 +44,7 @@ if ($scriptDir -ne $installPath) {
     $filesToCopy = @(
         "LidaPrint.ps1", "Configurator.ps1", "Install.ps1",
         "Instalador.bat", "LidaPrint.bat", "LidaPrint.vbs",
-        "logo.png", "DOCUMENTACION.md"
+        "logo.png", "README.md"
     )
     foreach ($file in $filesToCopy) {
         $src = Join-Path $scriptDir $file
