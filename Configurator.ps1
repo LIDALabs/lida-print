@@ -920,6 +920,24 @@ $tabs.TabPages.Add($t5)
 $form.Controls.Add($tabs)
 
 # ===================== BOTONES INFERIORES =====================
+function New-TestPdf {
+    param([string]$path, [string]$texto = "PRUEBA LIDAPRINT")
+    $content = @"
+%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 60>>stream
+BT /F1 24 Tf 100 700 Td ($texto) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Size 6/Root 1 0 R>>
+%%EOF
+"@
+    Set-Content -Path $path -Value $content -Encoding ASCII
+}
+
 $btnY = 465
 
 $btnTest = New-Object System.Windows.Forms.Button
@@ -940,30 +958,7 @@ $btnTest.Add_Click({
     }
 
     $testPdf = Join-Path $env:TEMP "test_invoice_F-00000001.pdf"
-    $testContent = @"
-%PDF-1.4
-1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
-2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
-3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
-4 0 obj<</Length 44>>stream
-BT /F1 24 Tf 100 700 Td (FACTURA DE PRUEBA) Tj ET
-endstream
-endobj
-5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000266 00000 n 
-0000000360 00000 n 
-trailer<</Size 6/Root 1 0 R>>
-startxref
-435
-%%EOF
-"@
-    Set-Content -Path $testPdf -Value $testContent -Encoding ASCII
+    New-TestPdf $testPdf "FACTURA DE PRUEBA"
 
     # Prueba con Ghostscript (mismo motor que usa el monitor)
     $dpiTest = if ($cmbDPI.SelectedItem) { $cmbDPI.SelectedItem } else { "300" }
@@ -1127,6 +1122,35 @@ $btnCancel.FlatAppearance.BorderColor = $dkBorder
 $btnCancel.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(88, 91, 112)
 $btnCancel.Add_Click({ $form.Close() })
 $form.Controls.Add($btnCancel)
+
+$btnTestMonitor = New-Object System.Windows.Forms.Button
+$btnTestMonitor.Text = "Probar Monitor"
+$btnTestMonitor.Location = New-Object System.Drawing.Point(410, $btnY)
+$btnTestMonitor.Size = New-Object System.Drawing.Size(150, 35)
+$btnTestMonitor.BackColor = $dkBtnTest
+$btnTestMonitor.ForeColor = $dkText
+$btnTestMonitor.FlatStyle = "Flat"
+$btnTestMonitor.FlatAppearance.BorderColor = $dkBorder
+$btnTestMonitor.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(78, 110, 160)
+$btnTestMonitor.Add_Click({
+    # Prueba de punta a punta: crea una factura valida en la carpeta vigilada.
+    # Si el monitor esta corriendo, la detecta, imprime y borra en segundos.
+    if (-not (Test-Path $txtDownloads.Text)) {
+        [System.Windows.Forms.MessageBox]::Show("La carpeta de descargas no existe.", "Error", "OK", "Error"); return
+    }
+    $monitorProc = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" }
+    if (-not $monitorProc) {
+        [System.Windows.Forms.MessageBox]::Show("El monitor NO esta corriendo. Guarda la configuracion (boton Guardar) para iniciarlo y proba de nuevo.", "Monitor detenido", "OK", "Warning"); return
+    }
+    $testInvoice = Join-Path $txtDownloads.Text "F-99999999.pdf"
+    New-TestPdf $testInvoice "PRUEBA MONITOR LIDAPRINT"
+    [System.Windows.Forms.MessageBox]::Show(
+        "Factura de prueba creada:`n$testInvoice`n`nEl monitor deberia imprimirla y borrarla en unos segundos.`n`n1. Revisa la impresora (hoja 'PRUEBA MONITOR LIDAPRINT')`n2. Usa 'Ver Log' (pestana Sistema) para ver el resultado",
+        "Prueba en curso", "OK", "Information"
+    )
+})
+$form.Controls.Add($btnTestMonitor)
 
 # ===================== TOOLTIPS =====================
 $toolTip = New-Object System.Windows.Forms.ToolTip
