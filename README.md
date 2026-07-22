@@ -15,8 +15,8 @@ lida-print/
 ├── Install.ps1              ← Logica de instalacion (la corren ambos de arriba)
 ├── LidaPrint.ps1            ← Monitor + servidor HTTP
 ├── Configurator.ps1         ← GUI de configuracion
-├── LidaPrint.bat            ← Lanzador del Configurator
-├── LidaPrint.vbs            ← Lanzador silencioso
+├── LidaPrint.bat            ← Abre el Configurator sin dejar consola abierta
+├── LidaPrint.vbs            ← Igual, con cero parpadeo (para doble clic)
 ├── config.json              ← Plantilla de configuracion
 ├── logo.png                 ← Icono de la GUI
 └── logs/                    ← Registro de impresiones (se crea al ejecutar)

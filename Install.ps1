@@ -224,7 +224,9 @@ Write-Host "  Abriendo el Configurator..." -ForegroundColor Yellow
 
 $configuratorPath = Join-Path $installPath "Configurator.ps1"
 if (Test-Path $configuratorPath) {
-    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$configuratorPath`""
+    # -WindowStyle Hidden: sin consola visible detras de la GUI; el Configurator
+    # queda como proceso independiente (cerrar esta consola no lo afecta).
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$configuratorPath`""
 } else {
     Write-Warn "Configurator.ps1 no encontrado en $installPath"
 }
