@@ -536,6 +536,7 @@ Write-Log "========================================"
 Start-WebListener
 
 $seenFiles = @{}
+$apiWaitLogged = @{}  # en modo API, loguear una sola vez por archivo que espera orden
 
 Write-Log "Monitor activo (polling 1s). Esperando facturas..." "OK"
 
@@ -561,7 +562,12 @@ try {
                         Write-Log "API: $fn en lista de omitidos, ignorando" "INFO"
                         $script:skipList.Remove($fn)
                     } else {
-                        # No esta en ninguna cola - ignorar
+                        # No esta en ninguna cola: se ignora POR DISENO (Odoo decide).
+                        # Loguear una vez por archivo para que sea visible en el log.
+                        if (-not $apiWaitLogged.ContainsKey($fn)) {
+                            $apiWaitLogged[$fn] = $true
+                            Write-Log "API activa: '$fn' descargado pero SIN orden de impresion de Odoo. En modo API las descargas locales NO se imprimen solas (usa POST /print, o desactiva la API para modo local)." "WARN"
+                        }
                     }
                 } else {
                     # MODO LOCAL: Usar patron si esta habilitado
