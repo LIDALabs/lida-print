@@ -30,13 +30,14 @@ function Write-BootLog {
 Write-BootLog "Proceso monitor lanzado (PID $PID, usuario $env:USERNAME)"
 
 # Ocultar la propia ventana de consola. La tarea lanza con -WindowStyle Minimized
-# porque Hidden puede colgar el arranque en Windows 11 (el host de consola por
-# defecto, Windows Terminal, tiene problemas creando consolas ocultas en segundo
-# plano). Arrancamos visibles-minimizados (seguro) y nos escondemos aca.
+# porque Hidden puede colgar el arranque en Windows 11; una vez corriendo, el
+# monitor esconde su consola por completo (invisible e incerrable por el usuario).
+# NOTA: se usa GetConsoleWindow() y NO Process.MainWindowHandle, que devuelve
+# cero para ventanas minimizadas y dejaba la consola visible.
 try {
-    $sig = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-    $win32 = Add-Type -MemberDefinition $sig -Name "Win32ShowWindow" -Namespace "Native" -PassThru
-    $hwnd = (Get-Process -Id $PID).MainWindowHandle
+    $sig = '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+    $win32 = Add-Type -MemberDefinition $sig -Name "Win32Console" -Namespace "Native" -PassThru
+    $hwnd = $win32::GetConsoleWindow()
     if ($hwnd -ne [IntPtr]::Zero) { [void]$win32::ShowWindow($hwnd, 0) }
 } catch { }
 
