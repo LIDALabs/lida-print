@@ -1151,7 +1151,7 @@ $btnSave.Add_Click({
             # El monitor esconde su propia ventana. -NoProfile evita bloqueos del perfil.
             $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$monitorPath`""
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-            $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+            $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
             if ($taskStale) {
                 [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$monitorPath", "Tarea reparada", "OK", "Information")
