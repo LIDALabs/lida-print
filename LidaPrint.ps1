@@ -549,7 +549,9 @@ try {
                     $seenFiles[$fp] = $true
                     Process-InvoiceFile $fp
                 } elseif (-not $config.webEnabled) {
-                    # En modo local, marcar como visto para no reprocesar
+                    # En modo local, marcar como visto para no reprocesar.
+                    # Loguear el motivo: un archivo ignorado en silencio es indepurable.
+                    Write-Log "Ignorado (no coincide con el patron '$($config.invoicePattern)'): $fn" "INFO"
                     $seenFiles[$fp] = $true
                 }
                 # En modo API, no marcar si no estaba en cola - se reintentara en el proximo poll
