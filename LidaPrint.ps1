@@ -22,16 +22,52 @@ if (-not (Test-Path $configPath)) {
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
+# ---------- Resolucion de rutas (self-locating) ----------
+# Las rutas guardadas en config.json pueden quedar obsoletas si la carpeta
+# se movio o el ejecutable cambio de lugar. Cada ruta se re-resuelve en
+# runtime probando: (1) el valor guardado, (2) ubicaciones conocidas.
+function Resolve-ToolPath {
+    param([string]$saved, [string[]]$candidates)
+    if ($saved -and (Test-Path $saved)) { return $saved }
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path $c)) { return $c }
+    }
+    return $null
+}
+
+$sumatraResolved = Resolve-ToolPath $config.sumatraPath @(
+    (Join-Path $scriptDir "bin\SumatraPDF.exe"),
+    "$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe",
+    "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe",
+    "${env:ProgramFiles(x86)}\SumatraPDF\SumatraPDF.exe"
+)
+
+# Ghostscript: consola de 64 bits (gswin64c) o 32 (gswin32c)
+$gsCandidates = @()
+$gsCandidates += (Join-Path $scriptDir "bin\gswin64c.exe")
+foreach ($base in @("$env:ProgramFiles\gs", "${env:ProgramFiles(x86)}\gs", "$env:LOCALAPPDATA\Programs\gs")) {
+    if (Test-Path $base) {
+        $found = Get-ChildItem -Path $base -Recurse -Filter "gswin*c.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($found) { $gsCandidates += $found.FullName }
+    }
+}
+$gsResolved = Resolve-ToolPath $config.gsPath $gsCandidates
+
 if (-not $config.printer) {
     Write-Host "[ERROR] No hay impresora configurada." -ForegroundColor Red
     Start-Sleep 10; exit 1
 }
-if (-not $config.sumatraPath -or -not (Test-Path $config.sumatraPath)) {
-    Write-Host "[ERROR] SumatraPDF no encontrado." -ForegroundColor Red
+if (-not $sumatraResolved -and -not $gsResolved) {
+    Write-Host "[ERROR] Ni SumatraPDF ni Ghostscript encontrados. Re-ejecuta el instalador." -ForegroundColor Red
     Start-Sleep 10; exit 1
 }
-if (-not $config.downloadFolder -or -not (Test-Path $config.downloadFolder)) {
-    Write-Host "[ERROR] Carpeta de descargas no encontrada." -ForegroundColor Red
+if (-not $config.downloadFolder) {
+    # Default: la carpeta de Descargas del usuario actual (donde Odoo baja las facturas)
+    $config.downloadFolder = Join-Path $env:USERPROFILE "Downloads"
+}
+if (-not (Test-Path $config.downloadFolder)) {
+    Write-Host "[ERROR] Carpeta de descargas no encontrada: $($config.downloadFolder)" -ForegroundColor Red
     Start-Sleep 10; exit 1
 }
 
@@ -66,7 +102,23 @@ function Test-FileReady {
     return $false
 }
 
-function Invoke-Print {
+function Invoke-ProcessCapture {
+    param([string]$exe, [string]$arguments)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = $arguments
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc.WaitForExit()
+    $code = $proc.ExitCode
+    $proc.Dispose()
+    return $code
+}
+
+function Invoke-PrintSumatra {
     param([string]$filePath)
     $fileName = Split-Path $filePath -Leaf
     $settings = @()
@@ -88,23 +140,10 @@ function Invoke-Print {
     if ($config.scale -and $config.scale -ne 100) { $settings += "scale=$($config.scale)" }
     $settingsStr = $settings -join ","
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $config.sumatraPath
-    $psi.Arguments = "-silent -print-to `"$($config.printer)`" -print-settings `"$settingsStr`" `"$filePath`""
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $proc.WaitForExit()
-    $exitCode = $proc.ExitCode
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
-    $proc.Dispose()
+    $exitCode = Invoke-ProcessCapture $sumatraResolved "-silent -print-to `"$($config.printer)`" -print-settings `"$settingsStr`" `"$filePath`""
 
     if ($exitCode -eq 0) {
-        return @{ Success = $true; Message = "Impreso: $fileName -> $($config.printer) [$settingsStr]" }
+        return @{ Success = $true; Message = "Impreso (Sumatra): $fileName -> $($config.printer) [$settingsStr]" }
     } else {
         $reason = switch ($exitCode) {
             2 { "No se pudo abrir el archivo" }
@@ -116,6 +155,65 @@ function Invoke-Print {
         }
         return @{ Success = $false; Message = "Error imprimiendo $fileName - $reason" }
     }
+}
+
+function Invoke-PrintGhostscript {
+    # Rasteriza el PDF al DPI configurado y lo envia via el driver de Windows
+    # (device mswinpr2). Esto arregla los casos donde el PDF se ve bien en
+    # pantalla pero imprime mal: la pagina llega a la impresora ya renderizada
+    # a la resolucion exacta, sin depender de como el driver interprete fuentes.
+    param([string]$filePath)
+    $fileName = Split-Path $filePath -Leaf
+    $dpi = if ($config.dpi) { [int]$config.dpi } else { 300 }
+
+    $gsArgs = @(
+        "-dBATCH", "-dNOPAUSE", "-dQUIET", "-dNoCancel",
+        "-sDEVICE=mswinpr2",
+        "-r$dpi",
+        "-dNumCopies=$($config.copies)"
+    )
+
+    # Suavizado de texto/graficos al rasterizar (maxima fidelidad)
+    if ($config.renderAsImage) {
+        $gsArgs += @("-dTextAlphaBits=4", "-dGraphicsAlphaBits=4")
+    }
+
+    # Papel personalizado o forma continua: fijar el medio en puntos
+    if ($config.useCustomPaper -or $config.continuousForm) {
+        $wMm = if ($config.useCustomPaper) { $config.paperWidth } else { 210 }
+        $hMm = if ($config.useCustomPaper) { $config.paperHeight } else { $config.formLength }
+        $wPts = [math]::Round($wMm * 2.835)
+        $hPts = [math]::Round($hMm * 2.835)
+        $gsArgs += @("-dDEVICEWIDTHPOINTS=$wPts", "-dDEVICEHEIGHTPOINTS=$hPts", "-dFIXEDMEDIA", "-dFitPage")
+    }
+
+    $gsArgs += "-sOutputFile=%printer%$($config.printer)"
+    $gsArgs += "-f"
+    $gsArgs += "`"$filePath`""
+    $argStr = ($gsArgs | ForEach-Object { if ($_ -match '^-sOutputFile=') { "`"$_`"" } else { $_ } }) -join " "
+
+    $exitCode = Invoke-ProcessCapture $gsResolved $argStr
+
+    if ($exitCode -eq 0) {
+        return @{ Success = $true; Message = "Impreso (Ghostscript ${dpi}dpi): $fileName -> $($config.printer)" }
+    } else {
+        return @{ Success = $false; Message = "Error Ghostscript ($exitCode) imprimiendo $fileName" }
+    }
+}
+
+function Invoke-Print {
+    param([string]$filePath)
+    # Motor segun configuracion, con fallback cruzado si el elegido no esta.
+    if ($config.renderEngine -eq "ghostscript") {
+        if ($gsResolved) { return Invoke-PrintGhostscript $filePath }
+        Write-Log "Ghostscript configurado pero no encontrado. Fallback a SumatraPDF." "WARN"
+    }
+    if ($sumatraResolved) { return Invoke-PrintSumatra $filePath }
+    if ($gsResolved) {
+        Write-Log "SumatraPDF no encontrado. Usando Ghostscript." "WARN"
+        return Invoke-PrintGhostscript $filePath
+    }
+    return @{ Success = $false; Message = "Ningun motor de impresion disponible" }
 }
 
 function Remove-Invoice {
@@ -398,7 +496,9 @@ Write-Log "Margenes:     T=$($config.marginTop) B=$($config.marginBottom) L=$($c
 Write-Log "Forma cont.:  $($config.continuousForm) (largo=$($config.formLength)mm)"
 Write-Log "Descargas:    $($config.downloadFolder)"
 Write-Log "Patron:       $($config.invoicePattern) (activo: $($config.usePattern))"
-Write-Log "SumatraPDF:   $($config.sumatraPath)"
+Write-Log "Motor:        $(if ($config.renderEngine -eq 'ghostscript') { 'Ghostscript' } else { 'SumatraPDF' })"
+Write-Log "SumatraPDF:   $(if ($sumatraResolved) { $sumatraResolved } else { 'no encontrado' })"
+Write-Log "Ghostscript:  $(if ($gsResolved) { $gsResolved } else { 'no encontrado' })"
 Write-Log "Web HTTP:     $($config.webEnabled) (puerto $($config.webPort))"
 Write-Log "========================================"
 

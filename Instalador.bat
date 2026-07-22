@@ -4,18 +4,11 @@ title LidaPrint - Instalador
 
 :: ============================================================
 ::  LidaPrint - Instalador
-::  Doble clic para instalar. Se eleva a Administrador solo,
-::  instala SumatraPDF, copia los scripts y crea la tarea
-::  programada. Delega todo el trabajo en Install.ps1.
+::  Doble clic para instalar. Instala a %LOCALAPPDATA%\LidaPrint
+::  (no requiere Administrador), instala SumatraPDF y Ghostscript,
+::  crea la tarea programada y abre el Configurator al terminar.
+::  Delega todo el trabajo en Install.ps1.
 :: ============================================================
-
-:: --- Verificar permisos de administrador ---
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Solicitando permisos de administrador...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
-)
 
 cd /d "%~dp0"
 

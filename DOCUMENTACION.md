@@ -1,6 +1,6 @@
 # LidaPrint
 
-Sistema de impresion automatica de facturas Odoo para Windows. Vigila una carpeta, imprime cada PDF con SumatraPDF y elimina el archivo. Puede operar de forma autonoma (por patron de nombre) o controlado por Odoo via HTTP.
+Sistema de impresion automatica de facturas Odoo para Windows. Vigila una carpeta, imprime cada PDF (con SumatraPDF o Ghostscript) y elimina el archivo. Puede operar de forma autonoma (por patron de nombre) o controlado por Odoo via HTTP.
 
 Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y **funcionamiento interno**.
 
@@ -9,16 +9,21 @@ Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y 
 ```
 lida-print/
 ├── DOCUMENTACION.md         ← Este archivo
-├── Instalador.bat           ← Doble clic para instalar (se auto-eleva a admin)
-├── Install.ps1              ← Logica de instalacion (lo corre Instalador.bat)
+├── web-install.ps1          ← Instalacion web en un comando (curl / irm)
+├── Instalador.bat           ← Doble clic para instalar (no requiere admin)
+├── Install.ps1              ← Logica de instalacion (la corren ambos de arriba)
 ├── LidaPrint.ps1            ← Monitor + servidor HTTP
 ├── Configurator.ps1         ← GUI de configuracion
 ├── LidaPrint.bat            ← Lanzador del Configurator
 ├── LidaPrint.vbs            ← Lanzador silencioso
-├── config.json              ← Configuracion persistente
+├── config.json              ← Plantilla de configuracion
 ├── logo.png                 ← Icono de la GUI
 └── logs/                    ← Registro de impresiones (se crea al ejecutar)
 ```
+
+> **Donde vive la instalacion:** LidaPrint se instala siempre en `%LOCALAPPDATA%\LidaPrint`
+> (ej: `C:\Users\TuUsuario\AppData\Local\LidaPrint`). Esa es la copia que ejecuta el sistema.
+> La carpeta que descargaste es solo el origen: podes moverla o borrarla sin romper nada.
 
 ---
 
@@ -47,7 +52,7 @@ Una vez instalado, LidaPrint corre en segundo plano (Task Scheduler) y:
 
 1. Monitorea la carpeta de Descargas cada 1 segundo.
 2. Detecta PDFs nuevos (por patron de nombre o por cola de impresion de la API).
-3. Los imprime con SumatraPDF usando la configuracion guardada.
+3. Los imprime con el motor configurado (SumatraPDF o Ghostscript) usando la configuracion guardada.
 4. Elimina el archivo tras imprimirlo.
 
 Todo sin intervencion del usuario.
@@ -58,35 +63,53 @@ Todo sin intervencion del usuario.
 
 - Windows 10 / 11
 - PowerShell 5.1 o superior
-- SumatraPDF (el instalador lo instala automaticamente)
+- SumatraPDF y Ghostscript (el instalador los instala automaticamente)
 - Impresora configurada en Windows
+- **No requiere Administrador** (Ghostscript puede pedir UAC una vez, si no esta instalado)
 
 ---
 
 ## Instalacion
 
-### Opcion 1: Instalacion completa (recomendado)
+### Opcion 1: Instalacion web en un comando (recomendado)
 
-1. Copiar la carpeta **`lida-print`** a `C:\` (o cualquier ruta).
-2. **Doble clic en `Instalador.bat`.** Se eleva a Administrador solo (acepta el aviso de UAC) y ejecuta todo el proceso.
-3. Seguir las instrucciones en pantalla. Al terminar, el Configurator se abre solo.
+Abrir PowerShell (normal, sin admin) y pegar:
 
-`Instalador.bat` es un lanzador que pide permisos de Administrador y corre `Install.ps1`.
-Si preferis hacerlo a mano, abri PowerShell **como Administrador** y ejecuta:
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\lida-print\Install.ps1"
+irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/web-install.ps1 | iex
 ```
 
-`Install.ps1` automaticamente:
-- Verifica/instala SumatraPDF (via `winget` o descarga directa).
-- **Actualiza** `config.json` con las rutas detectadas (sumatraPath, downloadFolder, installPath).
-- Crea la tarea programada **LidaPrint** (triggers: al iniciar sesion + al iniciar Windows), con `RunLevel Highest`.
-- Agrega la ruta al `PATH` del usuario (opcional para acceso directo desde cmd/PowerShell).
+O desde cmd con `curl`:
 
-### Opcion 2: Solo abrir el Configurator
+```cmd
+curl -L -o "%TEMP%\web-install.ps1" https://raw.githubusercontent.com/LIDALabs/lida-print/main/web-install.ps1 && powershell -ExecutionPolicy Bypass -File "%TEMP%\web-install.ps1"
+```
+
+Eso descarga LidaPrint a `%LOCALAPPDATA%\LidaPrint`, instala los motores de impresion,
+crea la tarea programada y **abre el Configurator automaticamente** al terminar.
+
+### Opcion 2: Desde la carpeta descargada
+
+1. Descargar/clonar el repositorio.
+2. **Doble clic en `Instalador.bat`.** No requiere Administrador.
+3. Al terminar, el Configurator se abre solo.
+
+Ambas opciones ejecutan `Install.ps1`, que automaticamente:
+- Copia los archivos a la ubicacion estable `%LOCALAPPDATA%\LidaPrint` (conserva tu `config.json` si ya existia).
+- Verifica/instala **SumatraPDF** (por usuario, sin admin).
+- Verifica/instala **Ghostscript** (via `winget` o descarga directa; puede pedir UAC).
+- Actualiza `config.json` con las rutas detectadas.
+- Crea la tarea programada **LidaPrint** a nivel usuario (arranca al iniciar sesion, sin admin).
+- Abre el Configurator.
+
+> **Migracion desde versiones viejas:** si tenias LidaPrint en `C:\AutoPrintFacturas`, el
+> instalador elimina la tarea vieja y la re-registra apuntando a la nueva ubicacion estable.
+> Si la tarea vieja fue creada como Administrador, ejecuta el instalador elevado una vez para migrarla.
+
+### Opcion 3: Solo abrir el Configurator
 
 1. Doble clic en `LidaPrint.bat` (o `LidaPrint.vbs` para arranque sin ventana de consola).
-2. Configurar y hacer clic en **Guardar**. La tarea programada se crea al guardar si "Auto-iniciar" esta activo.
+2. Configurar y hacer clic en **Guardar**. La tarea programada se crea/repara al guardar si "Auto-iniciar" esta activo.
 
 ---
 
@@ -109,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File "C:\lida-print\Install.ps1"
 
 ## Configuracion (Configurator)
 
-Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro, 5 pestanas.
+Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro, 6 pestanas.
 
 ### Pestana 1: Impresion
 
@@ -119,7 +142,7 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 | Copias | Copias por documento (1-10) | 2 |
 | Orientacion | `portrait` / `landscape` | portrait |
 | Escala (%) | Porcentaje del tamano original (10-200) | 100 |
-| DPI | Resolucion de impresion | 300 |
+| DPI | Resolucion de impresion: 72-600, incluye **203** (matriciales/termicas) | 300 |
 
 ### Pestana 2: Papel
 
@@ -143,7 +166,34 @@ Para impresoras matriciales con papel tractor.
 | Desplazamiento superior | Offset en mm | 0 |
 | Interlineado | mm entre lineas (4.23 = 6 LPI) | 4.23 |
 
-### Pestana 4: Monitoreo
+### Pestana 4: Calidad
+
+El apartado que controla **como se renderiza** el PDF antes de llegar a la impresora.
+
+| Campo | Descripcion | Default |
+|-------|-------------|---------|
+| Motor | `SumatraPDF (rapido)` o `Ghostscript (alta calidad, DPI exacto)` | SumatraPDF |
+| Suavizado maximo | Renderiza texto y graficos como imagen con antialiasing | desactivado |
+| Ghostscript | Ruta al ejecutable (`gswin64c.exe`), con **Detectar** automatico | auto-detectado |
+| Conversor DPI/pixeles | mm + DPI -> pixeles, y pixeles + DPI -> mm (bidireccional, en vivo) | 210mm @ 203dpi |
+
+**Cuando usar Ghostscript:** si el PDF se ve perfecto en pantalla pero **imprime feo**
+(letras deformadas, fuentes sustituidas, texto serruchado), el problema suele ser como el
+driver interpreta las fuentes del PDF. Ghostscript lo evita: **rasteriza la pagina al DPI
+exacto configurado** (pestana Impresion) y la envia ya renderizada como mapa de bits via el
+driver de Windows (device `mswinpr2`). El driver ya no interpreta nada: solo pinta puntos.
+
+**El conversor DPI/pixeles:** las impresoras de forma continua trabajan en pixeles a una
+densidad fija (203 DPI = 8 puntos/mm es el estandar en matriciales y termicas). El conversor
+resuelve la cuenta en ambos sentidos:
+
+- `pixeles = mm / 25.4 * DPI`  (ej: 210mm a 203dpi = 1678 px)
+- `mm = pixeles / DPI * 25.4`  (ej: 1678 px a 203dpi = 210mm)
+
+Util para calcular el `Largo del formulario` (pestana Forma Continua) cuando el fabricante
+especifica el area imprimible en pixeles.
+
+### Pestana 5: Monitoreo
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
@@ -155,7 +205,7 @@ Para impresoras matriciales con papel tractor.
 | Puerto | Puerto HTTP (muestra la URL al activar) | 8080 |
 | API Key | Clave de autenticacion (boton **Mostrar/Ocultar**). Obligatoria si la API esta activa | (vacio) |
 
-### Pestana 5: Sistema
+### Pestana 6: Sistema
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
@@ -165,7 +215,13 @@ Para impresoras matriciales con papel tractor.
 
 Botones inferiores: **Probar Impresion** (envia un PDF de prueba), **Guardar** (valida y persiste), **Cancelar**.
 
-Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de descargas existente, ruta de SumatraPDF valida, patron regex correcto y advierte si el puerto es < 1024.
+Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de descargas existente,
+motor de impresion valido (SumatraPDF o Ghostscript segun lo elegido), patron regex correcto,
+API Key presente si la API esta activa, y advierte si el puerto es < 1024.
+
+Ademas, al guardar **repara la tarea programada** si apunta a una ruta vieja: la re-registra
+apuntando a la ubicacion actual de los scripts. Esto resuelve el caso "movi/borre la carpeta
+y dejo de imprimir".
 
 ---
 
@@ -190,9 +246,12 @@ Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de desca
     "formLength":      279,
     "topOffset":       0,
     "linePitch":       4.23,
-    "sumatraPath":     "C:\\Users\\...\\SumatraPDF.exe",
-    "downloadFolder":  "C:\\Users\\...\\Downloads",
-    "installPath":     "C:\\AutoPrintFacturas",
+    "sumatraPath":     "",
+    "gsPath":          "",
+    "renderEngine":    "sumatra",
+    "renderAsImage":   false,
+    "downloadFolder":  "",
+    "installPath":     "",
     "autoStart":       true,
     "enableLogging":   true,
     "usePattern":      true,
@@ -218,9 +277,12 @@ Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de desca
 | `formLength` | int | Largo del formulario en mm |
 | `topOffset` | int | Desplazamiento superior en mm |
 | `linePitch` | decimal | Interlineado en mm |
-| `sumatraPath` | string | Ruta al ejecutable de SumatraPDF |
-| `downloadFolder` | string | Carpeta monitoreada |
-| `installPath` | string | Ruta de instalacion de los scripts |
+| `sumatraPath` | string | Ruta a SumatraPDF. Si esta vacia o quedo obsoleta, **se re-resuelve sola** en runtime |
+| `gsPath` | string | Ruta a Ghostscript (`gswin64c.exe`). Tambien auto-resuelta en runtime |
+| `renderEngine` | string | `sumatra` (rapido) o `ghostscript` (alta calidad, DPI exacto) |
+| `renderAsImage` | bool | Suavizado maximo de texto/graficos al rasterizar (solo Ghostscript) |
+| `downloadFolder` | string | Carpeta monitoreada. Vacia = Descargas del usuario actual |
+| `installPath` | string | Informativo. En runtime los scripts se auto-ubican con su propia ruta |
 | `autoStart` | bool | Si debe existir la tarea programada |
 | `enableLogging` | bool | Habilita el log |
 | `usePattern` | bool | Filtra por regex (solo modo Local) |
@@ -367,9 +429,11 @@ Solo en Modo Local con `usePattern = true`. Patron por defecto: `^(F|ND|NC)-\d{8
 
 ---
 
-## Opciones de SumatraPDF
+## Motores de impresion
 
-Comando generado por `Invoke-Print`:
+### SumatraPDF (motor rapido, default)
+
+Comando generado por `Invoke-PrintSumatra`:
 ```
 SumatraPDF.exe -silent -print-to "Impresora" -print-settings "2x,portrait,paper=A4" "archivo.pdf"
 ```
@@ -384,7 +448,7 @@ SumatraPDF.exe -silent -print-to "Impresora" -print-settings "2x,portrait,paper=
 | `paper=595x842` | Tamano personalizado en puntos (1 mm = 2.835 pt) |
 | `scale=N` | Escala en % |
 
-**Codigos de salida:**
+**Codigos de salida de SumatraPDF:**
 
 | Codigo | Significado |
 |--------|-------------|
@@ -394,6 +458,24 @@ SumatraPDF.exe -silent -print-to "Impresora" -print-settings "2x,portrait,paper=
 | 4 | Impresora no encontrada |
 | 5 | Error del driver |
 | 6 | Impresion deshabilitada |
+
+### Ghostscript (motor de alta calidad)
+
+Comando generado por `Invoke-PrintGhostscript`:
+```
+gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumCopies=2 "-sOutputFile=%printer%Impresora" -f "archivo.pdf"
+```
+
+| Opcion | Descripcion |
+|--------|-------------|
+| `-sDEVICE=mswinpr2` | Imprime via el driver de Windows, pero con la pagina YA rasterizada |
+| `-rN` | DPI de rasterizado (el valor de la pestana Impresion: 203, 300, etc.) |
+| `-dNumCopies=N` | Copias |
+| `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox "renderizar como imagen") |
+| `-dDEVICEWIDTHPOINTS / -dDEVICEHEIGHTPOINTS -dFIXEDMEDIA -dFitPage` | Papel personalizado / forma continua en puntos |
+
+**Fallback automatico:** si el motor configurado no esta instalado, LidaPrint usa el otro
+y lo registra en el log como WARN. Si no hay ninguno, el monitor no arranca.
 
 ---
 
@@ -417,9 +499,10 @@ Niveles: `INFO`, `WARN`, `ERROR`, `OK`.
 
 | Archivo | Rol |
 |---------|-----|
+| `web-install.ps1` | Descarga el proyecto desde GitHub (raw) y ejecuta `Install.ps1` |
+| `Install.ps1` | Instalador: copia a `%LOCALAPPDATA%\LidaPrint`, SumatraPDF + Ghostscript, tarea programada, abre el Configurator |
 | `LidaPrint.ps1` | Monitor principal: loop de polling + servidor HTTP |
-| `Configurator.ps1` | GUI de configuracion (Windows Forms, 5 pestanas) |
-| `Install.ps1` | Instalador: SumatraPDF, copia de scripts, tarea programada |
+| `Configurator.ps1` | GUI de configuracion (Windows Forms, 6 pestanas) |
 | `LidaPrint.bat` | Lanza el Configurator con `-ExecutionPolicy Bypass` |
 | `LidaPrint.vbs` | Ejecuta el `.bat` sin ventana de consola |
 | `config.json` | Configuracion persistente |
@@ -429,15 +512,20 @@ Niveles: `INFO`, `WARN`, `ERROR`, `OK`.
 ### Flujo general
 
 ```
-LidaPrint.bat / .vbs
+web-install.ps1 (curl/irm)  o  Instalador.bat
+    |
+    v
+Install.ps1  ──>  %LOCALAPPDATA%\LidaPrint\  (ubicacion ESTABLE)
     |
     v
 Configurator.ps1  ──>  config.json
     |
-    v (Task Scheduler — al iniciar sesion / al iniciar Windows, RunLevel Highest)
+    v (Task Scheduler — al iniciar sesion, nivel usuario, sin admin)
 LidaPrint.ps1
     |
-    +-- [Runspace HTTP]  Start-WebListener  (solo si webEnabled)
+    +-- [Resolucion de rutas]  Re-resuelve SumatraPDF y Ghostscript en runtime
+    |
+    +-- [Runspace HTTP]  Start-WebListener  (solo si webEnabled + API Key)
     |       GET  /             → dashboard HTML
     |       GET  /print/status → estado JSON
     |       POST /print        → printQueue.Add
@@ -451,8 +539,33 @@ LidaPrint.ps1
             +-- Modo Local: usePattern=true → filtra por regex
             |               usePattern=false → imprime todo PDF
             v
-      SumatraPDF imprime  →  elimina archivo
+      Motor imprime (SumatraPDF o Ghostscript)  →  elimina archivo
 ```
+
+### Resolucion de rutas (self-locating)
+
+El bug clasico de "movi la carpeta y dejo de imprimir" se elimina en tres capas:
+
+1. **Instalacion estable:** todo vive en `%LOCALAPPDATA%\LidaPrint`, una ruta que no
+   depende de donde descargaste el proyecto.
+2. **Auto-ubicacion:** los scripts derivan su propia carpeta (`$scriptDir`) en runtime;
+   `config.json`, `logs/` y los ejecutables se buscan relativos a ella. Ninguna funcion
+   confia en el `installPath` guardado.
+3. **Auto-reparacion de la tarea:** al Guardar, el Configurator compara la ruta que ejecuta
+   la tarea programada con la ubicacion real del script. Si difieren (instalacion vieja,
+   carpeta movida), la re-registra y avisa.
+
+Las rutas de SumatraPDF y Ghostscript guardadas en `config.json` son solo un cache: si el
+valor guardado no existe, `Resolve-ToolPath` prueba las ubicaciones conocidas
+(`bin\` local, `%LOCALAPPDATA%`, `Program Files`) y usa la primera que encuentre.
+
+### Seleccion de motor
+
+`Invoke-Print` despacha segun `renderEngine`:
+
+- `ghostscript` → `Invoke-PrintGhostscript` (rasteriza al DPI exacto, device `mswinpr2`).
+- `sumatra` (default) → `Invoke-PrintSumatra` (rapido, envia el PDF al driver).
+- Si el motor elegido no esta instalado, cae al otro con un WARN en el log.
 
 ### Concurrencia
 
@@ -467,8 +580,11 @@ recibe listener, carpeta de descargas, API key y ambas colas via `AddArgument` y
 | Funcion | Rol |
 |---------|-----|
 | `Write-Log` | Escribe en consola y en el log mensual con timestamp y nivel |
+| `Resolve-ToolPath` | Re-resuelve rutas de ejecutables en runtime (guardada -> conocidas) |
 | `Test-FileReady` | Verifica que el archivo no este bloqueado por otro proceso |
-| `Invoke-Print` | Construye los `-print-settings` y ejecuta SumatraPDF; mapea el exit code |
+| `Invoke-Print` | Despacha al motor configurado, con fallback cruzado |
+| `Invoke-PrintSumatra` | Construye los `-print-settings` y ejecuta SumatraPDF |
+| `Invoke-PrintGhostscript` | Rasteriza al DPI configurado y envia via `mswinpr2` |
 | `Remove-Invoice` | Elimina el archivo con hasta 5 reintentos |
 | `Process-InvoiceFile` | Espera que el tamano se estabilice, imprime y elimina |
 | `Start-WebListener` / `Stop-WebListener` | Ciclo de vida del servidor HTTP |
@@ -496,12 +612,15 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 | Problema | Causa probable | Solucion |
 |----------|----------------|----------|
 | No imprime ninguna factura | Impresora apagada o en pausa | Verificar estado en Panel de control |
-| "SumatraPDF no encontrado" | Ejecutable movido/eliminado | Re-ejecutar `Install.ps1` o corregir la ruta en el Configurator |
+| No imprime tras mover/borrar la carpeta descargada | Instalacion vieja apuntando a ruta muerta (ej: `C:\AutoPrintFacturas`) | Re-ejecutar el instalador (curl o `Instalador.bat`): migra la tarea a `%LOCALAPPDATA%\LidaPrint`. O abrir el Configurator y Guardar: repara la tarea |
+| **Imprime feo** (el PDF se ve bien en pantalla) | El driver interpreta mal las fuentes del PDF | Pestana **Calidad** -> motor **Ghostscript** + DPI de la impresora (203 en matriciales). Si persiste, activar "Suavizado maximo" |
+| "SumatraPDF no encontrado" | Ejecutable movido/eliminado | Se auto-resuelve en runtime; si no, re-ejecutar el instalador |
+| Ghostscript no instalado | winget/descarga fallo o UAC cancelado | Instalar desde ghostscript.com y usar **Detectar** en la pestana Calidad |
 | El PDF no se elimina | Archivo bloqueado por otro proceso | LidaPrint reintenta 5 veces; si falla, se reintenta al reiniciar |
 | No detecta facturas (modo local) | Patron incorrecto o API activada | Revisar el regex o desactivar la API |
 | API no responde | Puerto en uso o firewall | `netstat -an \| findstr 8080` y abrir el puerto |
 | 401 Unauthorized | API Key incorrecta | Verificar el header `X-Api-Key` |
-| El listener no arranca (ejecucion manual) | Falta reserva urlacl (sin admin) | `netsh http add urlacl url=http://+:8080/ user=%USERNAME%` o correr elevado |
+| El listener no arranca | Falta reserva urlacl (tarea de usuario, sin admin) | Una vez, como Administrador: `netsh http add urlacl url=http://+:8080/ user=%USERNAME%` |
 | Monitor se cierra al iniciar | Error en `config.json` | Revisar el log; suele ser impresora o ruta invalida |
 | La consola parpadea al arrancar | Se ejecuto el `.bat` directo | Usar `LidaPrint.vbs` para arranque silencioso |
 
@@ -511,8 +630,10 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 
 ```powershell
 Unregister-ScheduledTask -TaskName "LidaPrint" -Confirm:$false
-Remove-Item -Recurse -Force "C:\AutoPrintFacturas"
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\LidaPrint"
 ```
+
+Si venias de una instalacion vieja, elimina tambien `C:\AutoPrintFacturas` si existe.
 
 ---
 

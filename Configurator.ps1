@@ -16,20 +16,30 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configPath = Join-Path $scriptDir "config.json"
 
 function Load-Config {
+    $cfg = $null
     if (Test-Path $configPath) {
-        return Get-Content $configPath -Raw | ConvertFrom-Json
+        $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
     }
-    return [PSCustomObject]@{
-        printer = ""; copies = 2; orientation = "portrait"
-        paperSize = "A4"; paperWidth = 210; paperHeight = 297
-        useCustomPaper = $false; scale = 100; dpi = 300
-        marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
-        continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
-        sumatraPath = ""; downloadFolder = (Join-Path $env:USERPROFILE "Downloads")
-        installPath = $scriptDir; autoStart = $true; enableLogging = $true
-        usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
-        webEnabled = $false; webPort = 8080; webApiKey = ""
+    if (-not $cfg) {
+        $cfg = [PSCustomObject]@{
+            printer = ""; copies = 2; orientation = "portrait"
+            paperSize = "A4"; paperWidth = 210; paperHeight = 297
+            useCustomPaper = $false; scale = 100; dpi = 300
+            marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
+            continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
+            sumatraPath = ""; gsPath = ""; renderEngine = "sumatra"; renderAsImage = $false
+            downloadFolder = ""; installPath = ""
+            autoStart = $true; enableLogging = $true
+            usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
+            webEnabled = $false; webPort = 8080; webApiKey = ""
+        }
     }
+    # Defaults dinamicos: la carpeta de descargas del usuario actual si esta vacia.
+    # Nunca se persiste una ruta de otra maquina como valor por defecto.
+    if (-not $cfg.downloadFolder) {
+        $cfg | Add-Member -NotePropertyName downloadFolder -NotePropertyValue (Join-Path $env:USERPROFILE "Downloads") -Force
+    }
+    return $cfg
 }
 
 function Save-Config {
@@ -46,6 +56,30 @@ function Save-Config {
 }
 
 $config = Load-Config
+
+# ===================== DETECTAR MOTORES DE IMPRESION =====================
+function Find-Sumatra {
+    foreach ($p in @(
+        (Join-Path $scriptDir "bin\SumatraPDF.exe"),
+        "$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe",
+        "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe",
+        "${env:ProgramFiles(x86)}\SumatraPDF\SumatraPDF.exe"
+    )) { if (Test-Path $p) { return $p } }
+    return ""
+}
+
+function Find-Ghostscript {
+    $local = Join-Path $scriptDir "bin\gswin64c.exe"
+    if (Test-Path $local) { return $local }
+    foreach ($base in @("$env:ProgramFiles\gs", "${env:ProgramFiles(x86)}\gs", "$env:LOCALAPPDATA\Programs\gs")) {
+        if (Test-Path $base) {
+            $found = Get-ChildItem -Path $base -Recurse -Filter "gswin*c.exe" -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -First 1
+            if ($found) { return $found.FullName }
+        }
+    }
+    return ""
+}
 
 # ===================== DETECTAR IMPRESORAS =====================
 function Get-PrinterList {
@@ -268,9 +302,9 @@ $cmbDPI = New-Object System.Windows.Forms.ComboBox
 $cmbDPI.Location = New-Object System.Drawing.Point(230, 23)
 $cmbDPI.Size = New-Object System.Drawing.Size(80, 21)
 $cmbDPI.DropDownStyle = "DropDownList"
-@("72", "96", "150", "200", "300", "600") | ForEach-Object { $cmbDPI.Items.Add($_) | Out-Null }
+@("72", "96", "150", "203", "240", "300", "600") | ForEach-Object { $cmbDPI.Items.Add($_) | Out-Null }
 $dpiIdx = $cmbDPI.Items.IndexOf($config.dpi.ToString())
-if ($dpiIdx -ge 0) { $cmbDPI.SelectedIndex = $dpiIdx } else { $cmbDPI.SelectedIndex = 4 }
+if ($dpiIdx -ge 0) { $cmbDPI.SelectedIndex = $dpiIdx } else { $cmbDPI.SelectedIndex = $cmbDPI.Items.IndexOf("300") }
 Set-DarkTheme $cmbDPI
 $grpQuality.Controls.Add($cmbDPI)
 
@@ -508,6 +542,190 @@ $grpAlignment.Controls.Add($nudLinePitch)
 
 $tabs.TabPages.Add($t3)
 
+# ===================== TAB: CALIDAD =====================
+$tQ = New-Object System.Windows.Forms.TabPage
+$tQ.Text = "Calidad"
+Set-DarkTheme $tQ
+
+$grpEngine = New-Object System.Windows.Forms.GroupBox
+$grpEngine.Text = "Motor de impresion"
+$grpEngine.Location = New-Object System.Drawing.Point(10, 10)
+$grpEngine.Size = New-Object System.Drawing.Size(590, 120)
+Set-DarkTheme $grpEngine
+$tQ.Controls.Add($grpEngine)
+
+$lblEngine = New-Object System.Windows.Forms.Label
+$lblEngine.Text = "Motor:"
+$lblEngine.Location = New-Object System.Drawing.Point(10, 25)
+$lblEngine.Size = New-Object System.Drawing.Size(50, 20)
+Set-DarkTheme $lblEngine
+$grpEngine.Controls.Add($lblEngine)
+
+$cmbEngine = New-Object System.Windows.Forms.ComboBox
+$cmbEngine.Location = New-Object System.Drawing.Point(70, 23)
+$cmbEngine.Size = New-Object System.Drawing.Size(280, 21)
+$cmbEngine.DropDownStyle = "DropDownList"
+[void]$cmbEngine.Items.Add("SumatraPDF (rapido)")
+[void]$cmbEngine.Items.Add("Ghostscript (alta calidad, DPI exacto)")
+if ($config.renderEngine -eq "ghostscript") { $cmbEngine.SelectedIndex = 1 } else { $cmbEngine.SelectedIndex = 0 }
+Set-DarkTheme $cmbEngine
+$grpEngine.Controls.Add($cmbEngine)
+
+$chkRenderImage = New-Object System.Windows.Forms.CheckBox
+$chkRenderImage.Text = "Suavizado maximo de texto y graficos (renderizar como imagen)"
+$chkRenderImage.Location = New-Object System.Drawing.Point(10, 52)
+$chkRenderImage.Size = New-Object System.Drawing.Size(420, 20)
+$chkRenderImage.Checked = [bool]$config.renderAsImage
+Set-DarkTheme $chkRenderImage
+$grpEngine.Controls.Add($chkRenderImage)
+
+$lblGs = New-Object System.Windows.Forms.Label
+$lblGs.Text = "Ghostscript:"
+$lblGs.Location = New-Object System.Drawing.Point(10, 82)
+$lblGs.Size = New-Object System.Drawing.Size(75, 20)
+Set-DarkTheme $lblGs
+$grpEngine.Controls.Add($lblGs)
+
+$txtGs = New-Object System.Windows.Forms.TextBox
+$txtGs.Location = New-Object System.Drawing.Point(90, 80)
+$txtGs.Size = New-Object System.Drawing.Size(330, 20)
+$txtGs.Text = if ($config.gsPath) { $config.gsPath } else { Find-Ghostscript }
+Set-DarkTheme $txtGs
+$grpEngine.Controls.Add($txtGs)
+
+$btnBrowseGs = New-Object System.Windows.Forms.Button
+$btnBrowseGs.Text = "..."
+$btnBrowseGs.Location = New-Object System.Drawing.Point(430, 79)
+$btnBrowseGs.Size = New-Object System.Drawing.Size(45, 23)
+$btnBrowseGs.Add_Click({
+    $ofd = New-Object System.Windows.Forms.OpenFileDialog
+    $ofd.Filter = "Ghostscript|gswin64c.exe;gswin32c.exe"
+    if ($ofd.ShowDialog() -eq "OK") { $txtGs.Text = $ofd.FileName }
+})
+Set-DarkTheme $btnBrowseGs
+$grpEngine.Controls.Add($btnBrowseGs)
+
+$btnDetectGs = New-Object System.Windows.Forms.Button
+$btnDetectGs.Text = "Detectar"
+$btnDetectGs.Location = New-Object System.Drawing.Point(480, 79)
+$btnDetectGs.Size = New-Object System.Drawing.Size(90, 23)
+$btnDetectGs.Add_Click({
+    $found = Find-Ghostscript
+    if ($found) { $txtGs.Text = $found }
+    else { [System.Windows.Forms.MessageBox]::Show("Ghostscript no encontrado. Instalalo con el instalador o desde ghostscript.com", "Info", "OK", "Information") }
+})
+Set-DarkTheme $btnDetectGs
+$grpEngine.Controls.Add($btnDetectGs)
+
+$grpConv = New-Object System.Windows.Forms.GroupBox
+$grpConv.Text = "Conversor DPI / pixeles (para forma continua)"
+$grpConv.Location = New-Object System.Drawing.Point(10, 140)
+$grpConv.Size = New-Object System.Drawing.Size(590, 110)
+Set-DarkTheme $grpConv
+$tQ.Controls.Add($grpConv)
+
+# Fila 1: mm + DPI -> pixeles
+$lblCvMm = New-Object System.Windows.Forms.Label
+$lblCvMm.Text = "Milimetros:"
+$lblCvMm.Location = New-Object System.Drawing.Point(10, 28)
+$lblCvMm.Size = New-Object System.Drawing.Size(70, 20)
+Set-DarkTheme $lblCvMm
+$grpConv.Controls.Add($lblCvMm)
+
+$nudCvMm = New-Object System.Windows.Forms.NumericUpDown
+$nudCvMm.Location = New-Object System.Drawing.Point(85, 26)
+$nudCvMm.Size = New-Object System.Drawing.Size(80, 20)
+$nudCvMm.Minimum = 1; $nudCvMm.Maximum = 5000
+$nudCvMm.DecimalPlaces = 1; $nudCvMm.Increment = 0.5
+$nudCvMm.Value = 210
+Set-DarkTheme $nudCvMm
+$grpConv.Controls.Add($nudCvMm)
+
+$lblCvDpi1 = New-Object System.Windows.Forms.Label
+$lblCvDpi1.Text = "a DPI:"
+$lblCvDpi1.Location = New-Object System.Drawing.Point(175, 28)
+$lblCvDpi1.Size = New-Object System.Drawing.Size(45, 20)
+Set-DarkTheme $lblCvDpi1
+$grpConv.Controls.Add($lblCvDpi1)
+
+$nudCvDpi1 = New-Object System.Windows.Forms.NumericUpDown
+$nudCvDpi1.Location = New-Object System.Drawing.Point(225, 26)
+$nudCvDpi1.Size = New-Object System.Drawing.Size(70, 20)
+$nudCvDpi1.Minimum = 72; $nudCvDpi1.Maximum = 1200
+$nudCvDpi1.Value = 203
+Set-DarkTheme $nudCvDpi1
+$grpConv.Controls.Add($nudCvDpi1)
+
+$lblCvPxOut = New-Object System.Windows.Forms.Label
+$lblCvPxOut.Text = ""
+$lblCvPxOut.Location = New-Object System.Drawing.Point(310, 28)
+$lblCvPxOut.Size = New-Object System.Drawing.Size(260, 20)
+$lblCvPxOut.ForeColor = $dkAccent
+$lblCvPxOut.Font = New-Object System.Drawing.Font("Consolas", 9)
+$grpConv.Controls.Add($lblCvPxOut)
+
+# Fila 2: pixeles + DPI -> mm
+$lblCvPx = New-Object System.Windows.Forms.Label
+$lblCvPx.Text = "Pixeles:"
+$lblCvPx.Location = New-Object System.Drawing.Point(10, 62)
+$lblCvPx.Size = New-Object System.Drawing.Size(70, 20)
+Set-DarkTheme $lblCvPx
+$grpConv.Controls.Add($lblCvPx)
+
+$nudCvPx = New-Object System.Windows.Forms.NumericUpDown
+$nudCvPx.Location = New-Object System.Drawing.Point(85, 60)
+$nudCvPx.Size = New-Object System.Drawing.Size(80, 20)
+$nudCvPx.Minimum = 1; $nudCvPx.Maximum = 100000
+$nudCvPx.Value = 1678
+Set-DarkTheme $nudCvPx
+$grpConv.Controls.Add($nudCvPx)
+
+$lblCvDpi2 = New-Object System.Windows.Forms.Label
+$lblCvDpi2.Text = "a DPI:"
+$lblCvDpi2.Location = New-Object System.Drawing.Point(175, 62)
+$lblCvDpi2.Size = New-Object System.Drawing.Size(45, 20)
+Set-DarkTheme $lblCvDpi2
+$grpConv.Controls.Add($lblCvDpi2)
+
+$nudCvDpi2 = New-Object System.Windows.Forms.NumericUpDown
+$nudCvDpi2.Location = New-Object System.Drawing.Point(225, 60)
+$nudCvDpi2.Size = New-Object System.Drawing.Size(70, 20)
+$nudCvDpi2.Minimum = 72; $nudCvDpi2.Maximum = 1200
+$nudCvDpi2.Value = 203
+Set-DarkTheme $nudCvDpi2
+$grpConv.Controls.Add($nudCvDpi2)
+
+$lblCvMmOut = New-Object System.Windows.Forms.Label
+$lblCvMmOut.Text = ""
+$lblCvMmOut.Location = New-Object System.Drawing.Point(310, 62)
+$lblCvMmOut.Size = New-Object System.Drawing.Size(260, 20)
+$lblCvMmOut.ForeColor = $dkAccent
+$lblCvMmOut.Font = New-Object System.Drawing.Font("Consolas", 9)
+$grpConv.Controls.Add($lblCvMmOut)
+
+# 1 pulgada = 25.4 mm. px = mm / 25.4 * dpi ; mm = px / dpi * 25.4
+$updateConv = {
+    $px = [math]::Round(($nudCvMm.Value / 25.4) * $nudCvDpi1.Value)
+    $inch = [math]::Round($nudCvMm.Value / 25.4, 2)
+    $lblCvPxOut.Text = "= $px px  ($inch pulgadas)"
+    $mm = [math]::Round(($nudCvPx.Value / $nudCvDpi2.Value) * 25.4, 1)
+    $lblCvMmOut.Text = "= $mm mm"
+}
+$nudCvMm.Add_ValueChanged($updateConv)
+$nudCvDpi1.Add_ValueChanged($updateConv)
+$nudCvPx.Add_ValueChanged($updateConv)
+$nudCvDpi2.Add_ValueChanged($updateConv)
+& $updateConv
+
+$lblQHint = New-Object System.Windows.Forms.Label
+$lblQHint.Text = "Si el PDF se ve bien en pantalla pero imprime mal, usa Ghostscript: rasteriza la pagina al DPI exacto de la impresora (203 en matriciales / forma continua) y la envia ya renderizada, sin depender del driver."
+$lblQHint.Location = New-Object System.Drawing.Point(12, 258)
+$lblQHint.Size = New-Object System.Drawing.Size(585, 50)
+Set-DarkTheme $lblQHint
+$tQ.Controls.Add($lblQHint)
+
+$tabs.TabPages.Add($tQ)
+
 # ===================== TAB 4: MONITOREO =====================
 $t4 = New-Object System.Windows.Forms.TabPage
 $t4.Text = "Monitoreo"
@@ -600,7 +818,7 @@ $grpSumatra.Controls.Add($lblSumatra)
 $txtSumatra = New-Object System.Windows.Forms.TextBox
 $txtSumatra.Location = New-Object System.Drawing.Point(60, 20)
 $txtSumatra.Size = New-Object System.Drawing.Size(420, 20)
-$txtSumatra.Text = $config.sumatraPath
+$txtSumatra.Text = if ($config.sumatraPath -and (Test-Path $config.sumatraPath)) { $config.sumatraPath } else { Find-Sumatra }
 Set-DarkTheme $txtSumatra
 $grpSumatra.Controls.Add($txtSumatra)
 
@@ -855,7 +1073,8 @@ $btnSave.Add_Click({
     if (-not $txtDownloads.Text -or -not (Test-Path $txtDownloads.Text)) {
         [System.Windows.Forms.MessageBox]::Show("La carpeta de descargas no existe o no es accesible.", "Error", "OK", "Error"); return
     }
-    if (-not $txtSumatra.Text -or -not (Test-Path $txtSumatra.Text)) {
+    # SumatraPDF solo es obligatorio si es el motor elegido (con Ghostscript queda como fallback opcional)
+    if ($cmbEngine.SelectedIndex -eq 0 -and (-not $txtSumatra.Text -or -not (Test-Path $txtSumatra.Text))) {
         [System.Windows.Forms.MessageBox]::Show("La ruta de SumatraPDF no es valida.", "Error", "OK", "Error"); return
     }
     if ($chkUsePattern.Checked) {
@@ -891,8 +1110,11 @@ $btnSave.Add_Click({
         topOffset      = [int]$nudTopOff.Value
         linePitch      = [decimal]$nudLinePitch.Value
         sumatraPath    = $txtSumatra.Text
+        gsPath         = $txtGs.Text
+        renderEngine   = $(if ($cmbEngine.SelectedIndex -eq 1) { "ghostscript" } else { "sumatra" })
+        renderAsImage  = $chkRenderImage.Checked
         downloadFolder = $txtDownloads.Text
-        installPath    = $config.installPath
+        installPath    = $scriptDir
         autoStart      = $chkAutoStart.Checked
         enableLogging  = $chkLogging.Checked
         usePattern     = $chkUsePattern.Checked
@@ -902,21 +1124,39 @@ $btnSave.Add_Click({
         webApiKey      = $txtApiKey.Text
     }
 
+    if ($cmbEngine.SelectedIndex -eq 1 -and -not (Test-Path $txtGs.Text)) {
+        [System.Windows.Forms.MessageBox]::Show("Elegiste Ghostscript como motor pero la ruta no es valida. Usa 'Detectar' o instala Ghostscript.", "Error", "OK", "Error"); return
+    }
+
     Save-Config $newConfig
 
+    # La tarea programada SIEMPRE apunta a donde vive este script ($scriptDir),
+    # nunca a una ruta guardada que puede estar muerta. Si la tarea existente
+    # apunta a otra ruta (instalacion vieja o carpeta movida), se re-registra.
     $taskName = "LidaPrint"
+    $monitorPath = Join-Path $scriptDir "LidaPrint.ps1"
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    $taskStale = $false
+    if ($existingTask) {
+        $curArgs = ($existingTask.Actions | Select-Object -First 1).Arguments
+        if ($curArgs -notlike "*$monitorPath*") { $taskStale = $true }
+    }
 
-    if ($chkAutoStart.Checked -and -not $existingTask) {
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($config.installPath)\LidaPrint.ps1`""
-        $triggers = @(
-            (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME),
-            (New-ScheduledTaskTrigger -AtStartup)
-        )
-        $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" -RunLevel Highest | Out-Null
+    if ($chkAutoStart.Checked -and (-not $existingTask -or $taskStale)) {
+        try {
+            if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$monitorPath`""
+            $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+            $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
+            if ($taskStale) {
+                [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$monitorPath", "Tarea reparada", "OK", "Information")
+            }
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("No se pudo registrar la tarea programada: $_`n`nProba ejecutar el Configurator como Administrador una vez.", "Advertencia", "OK", "Warning")
+        }
     } elseif (-not $chkAutoStart.Checked -and $existingTask) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop } catch { }
     }
 
     [System.Windows.Forms.MessageBox]::Show(
