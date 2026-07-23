@@ -104,6 +104,16 @@ if (-not (Test-Path $config.downloadFolder)) {
     Start-Sleep 10; exit 1
 }
 
+# Directorio temporal PROPIO para los PDF intermedios de la pasada 1.
+# NO usar $env:TEMP: el Task Scheduler lo entrega en formato corto 8.3
+# (C:\Users\JOSEG~1\...) y ese alias puede no existir en el volumen,
+# rompiendo la impresion antes de empezar.
+$script:tempDir = Join-Path $scriptDir "temp"
+if (-not (Test-Path $script:tempDir)) { New-Item -ItemType Directory -Path $script:tempDir -Force | Out-Null }
+# Limpiar residuos de corridas anteriores
+Get-ChildItem -Path $script:tempDir -Filter "lidaprint_fit_*" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
 # ===================== FUNCIONES =====================
 function Write-Log {
     param([string]$message, [string]$level = "INFO")
@@ -191,7 +201,7 @@ function Invoke-PrintGhostscript {
     $wPts = $paper[0]; $hPts = $paper[1]
     if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
 
-    $resized = Join-Path $env:TEMP ("lidaprint_fit_" + [System.IO.Path]::GetFileName($filePath))
+    $resized = Join-Path $script:tempDir ("lidaprint_fit_" + [System.IO.Path]::GetFileName($filePath))
     $fitArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dDEVICEWIDTHPOINTS=$wPts -dDEVICEHEIGHTPOINTS=$hPts -dFIXEDMEDIA -dFitPage `"-sOutputFile=$resized`" -f `"$filePath`""
     $fitCode = Invoke-ProcessCapture $gsResolved $fitArgs
     $printSource = $filePath

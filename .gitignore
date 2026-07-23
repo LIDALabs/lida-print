@@ -2,6 +2,9 @@
 logs/
 *.log
 
+# PDFs intermedios de impresion (runtime)
+temp/
+
 # Compilados / builds
 *.exe
 

@@ -19,7 +19,8 @@ lida-print/
 ├── LidaPrint.vbs            ← Igual, con cero parpadeo (para doble clic)
 ├── config.json              ← Plantilla de configuracion
 ├── logo.png                 ← Icono de la GUI
-└── logs/                    ← Registro de impresiones (se crea al ejecutar)
+├── logs/                    ← Registro de impresiones (se crea al ejecutar)
+└── temp/                    ← PDFs intermedios de la pasada 1 (se crea al ejecutar)
 ```
 
 > **Donde vive la instalacion:** LidaPrint se instala siempre en `%LOCALAPPDATA%\LidaPrint`
