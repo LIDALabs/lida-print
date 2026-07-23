@@ -182,6 +182,26 @@ function Invoke-PrintGhostscript {
     $fileName = Split-Path $filePath -Leaf
     $dpi = if ($config.dpi) { [int]$config.dpi } else { 300 }
 
+    # PASADA 1 - Tamano de papel: mswinpr2 toma el tamano de pagina del DEVMODE
+    # del driver de Windows e IGNORA los parametros de medio de la linea de
+    # comandos. pdfwrite si los respeta: se re-formatea el PDF al tamano
+    # configurado (contenido escalado adentro con FitPage) y ESE es el que se
+    # imprime en la pasada 2.
+    $paper = Get-PaperPoints
+    $wPts = $paper[0]; $hPts = $paper[1]
+    if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
+
+    $resized = Join-Path $env:TEMP ("lidaprint_fit_" + [System.IO.Path]::GetFileName($filePath))
+    $fitArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dDEVICEWIDTHPOINTS=$wPts -dDEVICEHEIGHTPOINTS=$hPts -dFIXEDMEDIA -dFitPage `"-sOutputFile=$resized`" -f `"$filePath`""
+    $fitCode = Invoke-ProcessCapture $gsResolved $fitArgs
+    $printSource = $filePath
+    if ($fitCode -eq 0 -and (Test-Path $resized)) {
+        $printSource = $resized
+    } else {
+        Write-Log "Ajuste de tamano de papel fallo (gs $fitCode); se imprime el PDF original" "WARN"
+    }
+
+    # PASADA 2 - Impresion via driver de Windows (mswinpr2)
     $gsArgs = @(
         "-dBATCH", "-dNOPAUSE", "-dQUIET", "-dNoCancel",
         "-sDEVICE=mswinpr2",
@@ -193,13 +213,6 @@ function Invoke-PrintGhostscript {
     if ($config.renderAsImage) {
         $gsArgs += @("-dTextAlphaBits=4", "-dGraphicsAlphaBits=4")
     }
-
-    # Tamano del medio SIEMPRE explicito (tambien para A4/Letter/etc.: sin esto
-    # Ghostscript usaba el papel por defecto del driver e ignoraba la config).
-    $paper = Get-PaperPoints
-    $wPts = $paper[0]; $hPts = $paper[1]
-    if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
-    $gsArgs += @("-dDEVICEWIDTHPOINTS=$wPts", "-dDEVICEHEIGHTPOINTS=$hPts", "-dFIXEDMEDIA", "-dFitPage")
 
     # Margenes = DESPLAZAMIENTO puro por lado, sin escalar. Cada margen empuja
     # el contenido en su direccion: izquierdo -> derecha, derecho -> izquierda,
@@ -228,14 +241,17 @@ function Invoke-PrintGhostscript {
     $gsArgs += "-sOutputFile=%printer%$($config.printer)"
     if ($pageCmd) { $gsArgs += "-c"; $gsArgs += $pageCmd }
     $gsArgs += "-f"
-    $gsArgs += $filePath
+    $gsArgs += $printSource
     # Quotear todo argumento con espacios (bloque -c, OutputFile, ruta del PDF)
     $argStr = ($gsArgs | ForEach-Object { if ($_ -match '\s' -or $_ -match '^-sOutputFile=') { "`"$_`"" } else { $_ } }) -join " "
 
     $exitCode = Invoke-ProcessCapture $gsResolved $argStr
 
+    # Limpiar el PDF temporal de la pasada 1
+    if ($printSource -ne $filePath) { Remove-Item -LiteralPath $printSource -Force -ErrorAction SilentlyContinue }
+
     if ($exitCode -eq 0) {
-        return @{ Success = $true; Message = "Impreso (Ghostscript ${dpi}dpi): $fileName -> $($config.printer)" }
+        return @{ Success = $true; Message = "Impreso (Ghostscript ${dpi}dpi, $([math]::Round($wPts/2.835))x$([math]::Round($hPts/2.835))mm): $fileName -> $($config.printer)" }
     } else {
         return @{ Success = $false; Message = "Error Ghostscript ($exitCode) imprimiendo $fileName" }
     }

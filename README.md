@@ -451,19 +451,35 @@ configurado y la envia ya renderizada via el driver de Windows (device `mswinpr2
 driver no interpreta fuentes ni geometria — solo pinta puntos. Eso garantiza que lo que se
 ve en pantalla es lo que sale en papel, tambien en matriciales y forma continua.
 
-Comando generado por `Invoke-PrintGhostscript`:
+La impresion son **dos pasadas** de Ghostscript:
+
+**Pasada 1 — tamano de papel (`pdfwrite`):** el device de impresion de Windows (`mswinpr2`)
+toma el tamano de pagina del DEVMODE del driver e **ignora** los parametros de medio de la
+linea de comandos. Por eso el tamano configurado se aplica primero re-formateando el PDF:
+
 ```
-gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumCopies=2 -dDEVICEWIDTHPOINTS=595 -dDEVICEHEIGHTPOINTS=842 -dFIXEDMEDIA -dFitPage "-sOutputFile=%printer%Impresora" -c "<< /BeginPage { pop 28 28 translate 0.9 0.9 scale } >> setpagedevice" -f "archivo.pdf"
+gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dDEVICEWIDTHPOINTS=142 -dDEVICEHEIGHTPOINTS=283 -dFIXEDMEDIA -dFitPage "-sOutputFile=%TEMP%\lidaprint_fit_X.pdf" -f "archivo.pdf"
+```
+
+**Pasada 2 — impresion (`mswinpr2`):** el PDF ya redimensionado se rasteriza al DPI
+configurado y se envia al driver, con margenes y escala del usuario:
+
+```
+gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumCopies=2 "-sOutputFile=%printer%Impresora" -c "<< /BeginPage { pop 28 -28 translate 0.9 0.9 scale } >> setpagedevice" -f "%TEMP%\lidaprint_fit_X.pdf"
 ```
 
 | Opcion | Descripcion |
 |--------|-------------|
+| `pdfwrite` + `-dDEVICEWIDTH/HEIGHTPOINTS -dFIXEDMEDIA -dFitPage` | Re-formatea el PDF al tamano configurado (landscape intercambia ancho/alto) |
 | `-sDEVICE=mswinpr2` | Imprime via el driver de Windows con la pagina YA rasterizada |
 | `-rN` | DPI de rasterizado (pestana Impresion: 203, 300, etc.) |
 | `-dNumCopies=N` | Copias |
-| `-dDEVICEWIDTHPOINTS / HEIGHTPOINTS -dFIXEDMEDIA -dFitPage` | Tamano del medio en puntos (siempre explicito; landscape intercambia ancho/alto) |
 | `-c "<< /BeginPage ... >>"` | Margenes (desplazamiento puro por lado), topOffset y escala del usuario |
 | `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox en la pestana Calidad) |
+
+> **Nota fisica:** el tamano configurado define el area que ocupa el CONTENIDO. La hoja
+> fisica es la que este cargada en la impresora: un contenido de 50x100mm sobre una hoja
+> media carta imprime en una region de 50x100mm de esa hoja (alineable con los margenes).
 
 Todas las funcionalidades de configuracion (margenes, orientacion, paper size, escala,
 DPI, forma continua, desplazamiento superior) estan soportadas por este motor. La unica
