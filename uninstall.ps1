@@ -38,22 +38,31 @@ if ($task) {
 }
 
 # 2. Cerrar procesos del monitor que sigan corriendo
-Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
+Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 1000
 
 # 3. Eliminar instalacion actual
 if (Test-Path $installPath) {
-    Remove-Item -Recurse -Force $installPath
-    Write-Host "[OK] Eliminado: $installPath" -ForegroundColor Green
+    Remove-Item -LiteralPath $installPath -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path $installPath) {
+        Write-Host "[!] No se pudo eliminar completamente: $installPath" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK] Eliminado: $installPath" -ForegroundColor Green
+    }
 } else {
     Write-Host "[OK] Instalacion actual: no existia" -ForegroundColor Green
 }
 
 # 4. Eliminar instalacion vieja
 if (Test-Path $oldPath) {
-    Remove-Item -Recurse -Force $oldPath
-    Write-Host "[OK] Eliminado: $oldPath (instalacion vieja)" -ForegroundColor Green
+    Remove-Item -LiteralPath $oldPath -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path $oldPath) {
+        Write-Host "[!] No se pudo eliminar completamente: $oldPath" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK] Eliminado: $oldPath (instalacion vieja)" -ForegroundColor Green
+    }
 }
 
 # 5. Limpiar el PATH del usuario
