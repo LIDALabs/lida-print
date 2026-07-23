@@ -100,6 +100,10 @@ if (-not $config.printer) {
     Write-BootLog "No hay impresora configurada - abortando. Abre el Configurator, elige impresora y Guardar." "ERROR"
     Start-Sleep 10; exit 1
 }
+if ($config.printer -match '"') {
+    Write-BootLog "El nombre de impresora no puede contener comillas dobles: '$($config.printer)' - abortando. Corrige el nombre en el Configurator." "ERROR"
+    Start-Sleep 10; exit 1
+}
 if (-not $gsResolved) {
     Write-BootLog "Ghostscript no encontrado - abortando. Re-ejecuta el instalador." "ERROR"
     Start-Sleep 10; exit 1
@@ -257,8 +261,7 @@ function Invoke-PrintGhostscript {
         $pageCmd = "<< /BeginPage { pop $offX $offY translate $userScale $userScale scale } >> setpagedevice"
     }
 
-    $safePrinter = $config.printer -replace '"', '\"'
-    $gsArgs += "-sOutputFile=%printer%$safePrinter"
+    $gsArgs += "-sOutputFile=%printer%$($config.printer)"
     if ($pageCmd) { $gsArgs += "-c"; $gsArgs += $pageCmd }
     $gsArgs += "-f"
     $gsArgs += $printSource

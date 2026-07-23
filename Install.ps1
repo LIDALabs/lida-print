@@ -41,10 +41,31 @@ if (-not (Test-Path $installPath)) {
 $logsPath = Join-Path $installPath "logs"
 New-Item -ItemType Directory -Path $logsPath -Force | Out-Null
 # Restringir ACL del directorio de logs: SYSTEM y Administradores con control total,
-# usuario instalador con modificacion (necesario para escribir logs desde la tarea),
+# usuario instalador con control total (necesario para escribir logs desde la tarea),
 # sin herencia de permisos permisivos del padre.
+# Si ya existe una tarea con un usuario distinto al instalador, ese usuario tambien
+# recibe control total para que el monitor en curso no pierda acceso a los logs.
 try {
-    & icacls.exe $logsPath /inheritance:r /grant:r "NT AUTHORITY\SYSTEM:(OI)(CI)F" /grant:r "BUILTIN\Administrators:(OI)(CI)F" /grant:r "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)M" | Out-Null
+    $icaclsArgs = @(
+        $logsPath,
+        "/inheritance:r",
+        "/grant:r", "NT AUTHORITY\SYSTEM:(OI)(CI)F",
+        "/grant:r", "BUILTIN\Administrators:(OI)(CI)F",
+        "/grant:r", "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)F"
+    )
+    $existingTaskForAcl = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existingTaskForAcl) {
+        $taskUserId = $existingTaskForAcl.Principal.UserId
+        # Normalizar: la tarea puede guardar solo el nombre sin dominio
+        $taskUserNorm = if ($taskUserId -like "*\*") { $taskUserId } else { "${env:USERDOMAIN}\$taskUserId" }
+        $currentUserNorm = "${env:USERDOMAIN}\${env:USERNAME}"
+        if ($taskUserNorm -ne $currentUserNorm) {
+            # El monitor corre como otro usuario: garantizar que siga escribiendo logs
+            $icaclsArgs += "/grant:r"
+            $icaclsArgs += "${taskUserId}:(OI)(CI)F"
+        }
+    }
+    & icacls.exe @icaclsArgs | Out-Null
     Write-OK "ACL del directorio de logs configurada"
 } catch {
     Write-Warn "No se pudo configurar el ACL del directorio de logs: $_"

@@ -1100,6 +1100,9 @@ $btnSave.Add_Click({
     if (-not $cmbPrinter.SelectedItem) {
         [System.Windows.Forms.MessageBox]::Show("Seleccione una impresora.", "Error", "OK", "Error"); return
     }
+    if ($cmbPrinter.SelectedItem -match '"') {
+        [System.Windows.Forms.MessageBox]::Show("El nombre de impresora no puede contener comillas dobles.`n`nNombre detectado: $($cmbPrinter.SelectedItem)", "Error", "OK", "Error"); return
+    }
     if (-not $txtDownloads.Text -or -not (Test-Path $txtDownloads.Text)) {
         [System.Windows.Forms.MessageBox]::Show("La carpeta de descargas no existe o no es accesible.", "Error", "OK", "Error"); return
     }
