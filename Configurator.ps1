@@ -72,6 +72,22 @@ function Find-Ghostscript {
 }
 
 # ===================== DETECTAR IMPRESORAS =====================
+function Get-PrinterDefaultDpi {
+    # DPI por defecto reportado por el driver (DEVMODE) via WMI.
+    # Funciona con cualquier marca: Epson matricial (180/360), Bixolon
+    # termica (203), Canon laser (600), etc. Devuelve $null si el driver
+    # no lo reporta.
+    param([string]$printerName)
+    try {
+        $escaped = $printerName -replace "'", "''"
+        $p = Get-CimInstance Win32_Printer -Filter "Name = '$escaped'" -ErrorAction Stop
+        if ($p -and $p.HorizontalResolution -gt 0) {
+            return @([int]$p.HorizontalResolution, [int]$p.VerticalResolution)
+        }
+    } catch { }
+    return $null
+}
+
 function Get-PrinterList {
     try {
         return (Get-Printer | Where-Object { $_.Type -ne "Virtual" -and $_.Name -notlike "*PDF*" -and $_.Name -notlike "*XPS*" } |
@@ -261,7 +277,7 @@ $grpOptions.Controls.Add($cmbOrient)
 $grpQuality = New-Object System.Windows.Forms.GroupBox
 $grpQuality.Text = "Calidad"
 $grpQuality.Location = New-Object System.Drawing.Point(10, 150)
-$grpQuality.Size = New-Object System.Drawing.Size(590, 60)
+$grpQuality.Size = New-Object System.Drawing.Size(590, 88)
 Set-DarkTheme $grpQuality
 $t1.Controls.Add($grpQuality)
 
@@ -298,6 +314,45 @@ $cmbDPI.DropDownStyle = "DropDown"
 $cmbDPI.Text = if ($config.dpi) { $config.dpi.ToString() } else { "300" }
 Set-DarkTheme $cmbDPI
 $grpQuality.Controls.Add($cmbDPI)
+
+# DPI por defecto del driver de la impresora seleccionada
+$lblPrinterDpi = New-Object System.Windows.Forms.Label
+$lblPrinterDpi.Text = ""
+$lblPrinterDpi.Location = New-Object System.Drawing.Point(10, 56)
+$lblPrinterDpi.Size = New-Object System.Drawing.Size(390, 20)
+$lblPrinterDpi.ForeColor = $dkAccent
+$grpQuality.Controls.Add($lblPrinterDpi)
+
+$btnUseDpi = New-Object System.Windows.Forms.Button
+$btnUseDpi.Text = "Usar este DPI"
+$btnUseDpi.Location = New-Object System.Drawing.Point(410, 52)
+$btnUseDpi.Size = New-Object System.Drawing.Size(110, 23)
+$btnUseDpi.Enabled = $false
+Set-DarkTheme $btnUseDpi
+$grpQuality.Controls.Add($btnUseDpi)
+
+$script:printerDefaultDpi = $null
+$updatePrinterDpiHint = {
+    $script:printerDefaultDpi = $null
+    $btnUseDpi.Enabled = $false
+    if ($cmbPrinter.SelectedItem) {
+        $res = Get-PrinterDefaultDpi $cmbPrinter.SelectedItem
+        if ($res) {
+            $script:printerDefaultDpi = $res[0]
+            $lblPrinterDpi.Text = "DPI por defecto del driver: $($res[0]) x $($res[1])"
+            $btnUseDpi.Enabled = $true
+        } else {
+            $lblPrinterDpi.Text = "DPI por defecto del driver: no reportado"
+        }
+    } else {
+        $lblPrinterDpi.Text = ""
+    }
+}
+$btnUseDpi.Add_Click({
+    if ($script:printerDefaultDpi) { $cmbDPI.Text = $script:printerDefaultDpi.ToString() }
+})
+$cmbPrinter.Add_SelectedIndexChanged($updatePrinterDpiHint)
+& $updatePrinterDpiHint
 
 $tabs.TabPages.Add($t1)
 

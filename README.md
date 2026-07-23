@@ -160,6 +160,7 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 | Orientacion | `portrait` / `landscape` | portrait |
 | Escala (%) | Porcentaje del tamano original (10-200) | 100 |
 | DPI | Resolucion de impresion: presets (203 matriciales, 300 laser, etc.) **o valor escrito a mano** (72-1200) | 300 |
+| DPI del driver | Muestra el DPI por defecto que reporta el driver de la impresora seleccionada (Epson, Bixolon, Canon, etc.); boton **Usar este DPI** lo aplica de un clic | auto |
 
 ### Pestana 2: Papel
 
