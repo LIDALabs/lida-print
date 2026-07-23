@@ -264,9 +264,18 @@ function Invoke-Print {
 
 function Remove-Invoice {
     param([string]$filePath)
-    for ($i = 0; $i -lt 5; $i++) {
-        try { Remove-Item -LiteralPath $filePath -Force; return $true } catch { Start-Sleep -Seconds 1 }
+    $lastError = $null
+    for ($i = 0; $i -lt 8; $i++) {
+        try {
+            Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
+            return $true
+        } catch {
+            $lastError = $_.Exception.Message
+            Start-Sleep -Milliseconds 700
+        }
     }
+    # Dejar el MOTIVO en el log: "no se pudo eliminar" sin causa es indepurable
+    Write-Log "Eliminacion fallida tras 8 intentos: $filePath - $lastError" "ERROR"
     return $false
 }
 
