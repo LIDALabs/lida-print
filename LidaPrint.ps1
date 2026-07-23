@@ -32,7 +32,16 @@ Write-BootLog "Proceso monitor lanzado (PID $PID, usuario $env:USERNAME)"
 # Instancia unica: dos monitores en paralelo compiten por los mismos archivos
 # (doble impresion o errores espurios cuando uno borra lo que el otro procesa).
 # El mutex vive lo que vive el proceso; el SO lo libera al salir.
-$script:instanceMutex = New-Object System.Threading.Mutex($false, "Local\LidaPrintMonitor")
+# Intentar mutex Global para cubrir sesiones distintas (TS/RDS). Si el usuario
+# no tiene permiso para crear objetos globales, caer a Local sin error.
+$script:instanceMutex = $null
+try {
+    $script:instanceMutex = New-Object System.Threading.Mutex($false, "Global\LidaPrintMonitor")
+} catch [System.UnauthorizedAccessException] {
+    $script:instanceMutex = New-Object System.Threading.Mutex($false, "Local\LidaPrintMonitor")
+} catch {
+    $script:instanceMutex = New-Object System.Threading.Mutex($false, "Local\LidaPrintMonitor")
+}
 if (-not $script:instanceMutex.WaitOne(0)) {
     Write-BootLog "Ya hay otro monitor corriendo en esta sesion - esta instancia sale (PID $PID)" "WARN"
     exit 0
@@ -248,7 +257,8 @@ function Invoke-PrintGhostscript {
         $pageCmd = "<< /BeginPage { pop $offX $offY translate $userScale $userScale scale } >> setpagedevice"
     }
 
-    $gsArgs += "-sOutputFile=%printer%$($config.printer)"
+    $safePrinter = $config.printer -replace '"', '\"'
+    $gsArgs += "-sOutputFile=%printer%$safePrinter"
     if ($pageCmd) { $gsArgs += "-c"; $gsArgs += $pageCmd }
     $gsArgs += "-f"
     $gsArgs += $printSource
@@ -296,7 +306,7 @@ function Process-InvoiceFile {
     # Esperar tamano estable. Chequeos rapidos (200ms) para minimizar la latencia
     # de impresion: ~600ms tipico para un archivo ya descargado, hasta 5s para
     # descargas lentas.
-    $lastSize = -1; $stable = 0; $ready = $false
+    $sz = -1; $lastSize = -1; $stable = 0; $ready = $false
     for ($i = 0; $i -lt 25; $i++) {
         Start-Sleep -Milliseconds 200
         try { $sz = (Get-Item -LiteralPath $fp).Length } catch { break }
@@ -348,13 +358,41 @@ function Start-WebListener {
         # El script del listener corre en su propio runspace via BeginInvoke.
         # Todos los datos que necesita se pasan por AddArgument (ver mas abajo).
         [powershell]::Create().AddScript({
-            param($listener, $dlFolder, $apiKey, $pq, $sl)
-            while ($listener.IsListening) {
-                try {
-                    $ctx = $listener.GetContext()
-                    $req = $ctx.Request
-                    $resp = $ctx.Response
+            param($listener, $dlFolder, $apiKey, $pq, $sl, $logFile)
 
+            # Escritura de log desde el runspace: Add-Content es thread-safe por
+            # defecto en .NET (usa FileShare.ReadWrite + append), suficiente aqui.
+            function Write-ListenerLog {
+                param([string]$msg, [string]$lvl = "INFO")
+                $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$lvl] [HTTP] $msg"
+                try { Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8 } catch { }
+            }
+
+            # Limite de tamano para cuerpos JSON de /print y /skip (1 MB)
+            $maxJsonBytes = 1MB
+            # Limite para /print/file (50 MB)
+            $maxUploadBytes = 50MB
+
+            while ($listener.IsListening) {
+                $ctx  = $null
+                $req  = $null
+                $resp = $null
+                try {
+                    $ctx  = $listener.GetContext()
+                    $req  = $ctx.Request
+                    $resp = $ctx.Response
+                } catch [System.Net.HttpListenerException] {
+                    # El listener fue detenido (shutdown normal): salir sin ruido.
+                    break
+                } catch [System.ObjectDisposedException] {
+                    break
+                } catch {
+                    Write-ListenerLog "Error obteniendo contexto: $_" "ERROR"
+                    Start-Sleep -Milliseconds 200
+                    continue
+                }
+
+                try {
                     # GET / - Dashboard web
                     if ($req.HttpMethod -eq "GET" -and $req.Url.AbsolutePath -eq "/") {
                         $pqRows = if ($pq.Count) { ($pq.ToArray() | ForEach-Object { "<div class='ok'>$_</div>" }) -join "" } else { "<div class='empty'>(vacia)</div>" }
@@ -380,7 +418,6 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         $resp.ContentType = "text/html; charset=utf-8"
                         $resp.ContentLength64 = $body.Length
                         $resp.OutputStream.Write($body, 0, $body.Length)
-                        $resp.Close()
                         continue
                     }
 
@@ -395,39 +432,54 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         $resp.ContentType = "application/json"
                         $resp.ContentLength64 = $body.Length
                         $resp.OutputStream.Write($body, 0, $body.Length)
-                        $resp.Close()
                         continue
                     }
 
                     if ($req.HttpMethod -ne "POST") {
-                        $resp.StatusCode = 405; $resp.Close(); continue
+                        $resp.StatusCode = 405; continue
                     }
 
                     if ($apiKey -and $req.Headers["X-Api-Key"] -ne $apiKey) {
                         $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"unauthorized"}')
                         $resp.StatusCode = 401; $resp.ContentType = "application/json"
                         $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
-                        $resp.Close(); continue
+                        continue
                     }
 
                     # POST /print - Agregar archivo(s) a la cola de impresion
                     if ($req.Url.AbsolutePath -eq "/print") {
+                        # Rechazar cuerpos demasiado grandes antes de leer
+                        if ($req.ContentLength64 -lt 0 -or $req.ContentLength64 -gt $maxJsonBytes) {
+                            $code = if ($req.ContentLength64 -lt 0) { 411 } else { 413 }
+                            $errMsg = if ($req.ContentLength64 -lt 0) { '{"error":"length required"}' } else { '{"error":"body too large"}' }
+                            $body = [System.Text.Encoding]::UTF8.GetBytes($errMsg)
+                            $resp.StatusCode = $code; $resp.ContentType = "application/json"
+                            $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
+                            continue
+                        }
                         $reader = New-Object System.IO.StreamReader($req.InputStream)
                         $rawBody = $reader.ReadToEnd(); $reader.Close()
 
-                        $json = $rawBody | ConvertFrom-Json
+                        $json = $null
+                        try { $json = $rawBody | ConvertFrom-Json } catch {
+                            $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"invalid JSON"}')
+                            $resp.StatusCode = 400; $resp.ContentType = "application/json"
+                            $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
+                            continue
+                        }
 
                         $added = @()
                         $files = @()
-                        if ($json.filename) { $files = @($json.filename) }
+                        if ($json.filename)  { $files = @($json.filename) }
                         elseif ($json.filenames) { $files = @($json.filenames) }
 
                         foreach ($fn in $files) {
+                            # Validar que el item sea un string no vacio
+                            if (-not ($fn -is [string]) -or $fn.Trim() -eq "") { continue }
                             if (-not $fn.EndsWith(".pdf")) { $fn += ".pdf" }
                             if ($fn -notin $pq.ToArray()) {
                                 [void]$pq.Add($fn)
                                 $added += $fn
-                                # Quitar de skipList si estaba ahi
                                 if ($fn -in $sl.ToArray()) { $sl.Remove($fn) }
                             }
                         }
@@ -439,28 +491,42 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         }
                         $body = [System.Text.Encoding]::UTF8.GetBytes(($result | ConvertTo-Json -Compress))
                         $resp.ContentType = "application/json"; $resp.ContentLength64 = $body.Length
-                        $resp.OutputStream.Write($body, 0, $body.Length); $resp.Close()
+                        $resp.OutputStream.Write($body, 0, $body.Length)
                         continue
                     }
 
                     # POST /skip - Marcar archivo(s) para NO imprimir
                     if ($req.Url.AbsolutePath -eq "/skip") {
+                        if ($req.ContentLength64 -lt 0 -or $req.ContentLength64 -gt $maxJsonBytes) {
+                            $code = if ($req.ContentLength64 -lt 0) { 411 } else { 413 }
+                            $errMsg = if ($req.ContentLength64 -lt 0) { '{"error":"length required"}' } else { '{"error":"body too large"}' }
+                            $body = [System.Text.Encoding]::UTF8.GetBytes($errMsg)
+                            $resp.StatusCode = $code; $resp.ContentType = "application/json"
+                            $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
+                            continue
+                        }
                         $reader = New-Object System.IO.StreamReader($req.InputStream)
                         $rawBody = $reader.ReadToEnd(); $reader.Close()
 
-                        $json = $rawBody | ConvertFrom-Json
+                        $json = $null
+                        try { $json = $rawBody | ConvertFrom-Json } catch {
+                            $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"invalid JSON"}')
+                            $resp.StatusCode = 400; $resp.ContentType = "application/json"
+                            $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
+                            continue
+                        }
 
                         $added = @()
                         $files = @()
-                        if ($json.filename) { $files = @($json.filename) }
+                        if ($json.filename)  { $files = @($json.filename) }
                         elseif ($json.filenames) { $files = @($json.filenames) }
 
                         foreach ($fn in $files) {
+                            if (-not ($fn -is [string]) -or $fn.Trim() -eq "") { continue }
                             if (-not $fn.EndsWith(".pdf")) { $fn += ".pdf" }
                             if ($fn -notin $sl.ToArray()) {
                                 [void]$sl.Add($fn)
                                 $added += $fn
-                                # Quitar de printQueue si estaba ahi
                                 if ($fn -in $pq.ToArray()) { $pq.Remove($fn) }
                             }
                         }
@@ -472,7 +538,7 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         }
                         $body = [System.Text.Encoding]::UTF8.GetBytes(($result | ConvertTo-Json -Compress))
                         $resp.ContentType = "application/json"; $resp.ContentLength64 = $body.Length
-                        $resp.OutputStream.Write($body, 0, $body.Length); $resp.Close()
+                        $resp.OutputStream.Write($body, 0, $body.Length)
                         continue
                     }
 
@@ -482,24 +548,28 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                         $sl.Clear()
                         $body = [System.Text.Encoding]::UTF8.GetBytes('{"ok":true,"printQueue":[],"skipList":[]}')
                         $resp.ContentType = "application/json"; $resp.ContentLength64 = $body.Length
-                        $resp.OutputStream.Write($body, 0, $body.Length); $resp.Close()
+                        $resp.OutputStream.Write($body, 0, $body.Length)
                         continue
                     }
 
                     # POST /print/file - Subir PDF directamente
                     if ($req.Url.AbsolutePath -eq "/print/file") {
-                        # Limite de tamano: proteccion contra abuso / agotamiento de disco
-                        $maxUploadBytes = 50MB
+                        # Validar ContentLength64 antes de leer: rechazar negativo o excesivo
+                        if ($req.ContentLength64 -lt 0) {
+                            $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"Content-Length required"}')
+                            $resp.StatusCode = 411; $resp.ContentType = "application/json"
+                            $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
+                            continue
+                        }
                         if ($req.ContentLength64 -gt $maxUploadBytes) {
                             $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"file too large"}')
                             $resp.StatusCode = 413; $resp.ContentType = "application/json"
                             $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
-                            $resp.Close(); continue
+                            continue
                         }
 
                         $fileName = $req.Headers["X-Filename"]
                         if (-not $fileName) { $fileName = "web_upload_$(Get-Date -Format 'yyyyMMddHHmmss').pdf" }
-                        # Sanear: solo el nombre del archivo, sin rutas (evita path traversal)
                         $fileName = [System.IO.Path]::GetFileName($fileName)
                         if (-not $fileName.EndsWith(".pdf")) { $fileName += ".pdf" }
                         $destPath = Join-Path $dlFolder $fileName
@@ -513,28 +583,30 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                             $body = [System.Text.Encoding]::UTF8.GetBytes('{"error":"not a PDF"}')
                             $resp.StatusCode = 400; $resp.ContentType = "application/json"
                             $resp.ContentLength64 = $body.Length; $resp.OutputStream.Write($body, 0, $body.Length)
-                            $resp.Close(); continue
+                            continue
                         }
 
                         [System.IO.File]::WriteAllBytes($destPath, $bytes)
 
-                        # Auto-agregar a printQueue
                         if ($fileName -notin $pq.ToArray()) {
                             [void]$pq.Add($fileName)
                         }
 
                         $body = [System.Text.Encoding]::UTF8.GetBytes("{`"ok`":true,`"file`":`"$fileName`"}")
                         $resp.ContentType = "application/json"; $resp.ContentLength64 = $body.Length
-                        $resp.OutputStream.Write($body, 0, $body.Length); $resp.Close()
+                        $resp.OutputStream.Write($body, 0, $body.Length)
                         continue
                     }
 
-                    $resp.StatusCode = 404; $resp.Close()
+                    $resp.StatusCode = 404
                 } catch {
-                    Start-Sleep -Milliseconds 100
+                    Write-ListenerLog "Error procesando solicitud: $_" "ERROR"
+                } finally {
+                    # Garantizar que la respuesta siempre se cierra
+                    if ($resp) { try { $resp.Close() } catch { } }
                 }
             }
-        }).AddArgument($script:httpListener).AddArgument($config.downloadFolder).AddArgument($config.webApiKey).AddArgument($script:printQueue).AddArgument($script:skipList).BeginInvoke() | Out-Null
+        }).AddArgument($script:httpListener).AddArgument($config.downloadFolder).AddArgument($config.webApiKey).AddArgument($script:printQueue).AddArgument($script:skipList).AddArgument((Join-Path $scriptDir "logs\PrintLog_$(Get-Date -Format 'yyyy-MM').txt")).BeginInvoke() | Out-Null
 
     } catch {
         Write-Log "Error iniciando listener HTTP: $_" "WARN"
