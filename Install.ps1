@@ -18,6 +18,11 @@ $installPath = Join-Path $env:LOCALAPPDATA "LidaPrint"
 $taskName    = "LidaPrint"
 $gsUrl       = "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10031/gs10031w64.exe"
 
+# SHA-256 esperado del instalador gs10031w64.exe.
+# Actualizar en cada nueva version de Ghostscript.
+# Si se deja vacio, la verificacion recae en la firma Authenticode.
+$gsExpectedSha256 = ""
+
 function Write-Step { param([string]$msg) Write-Host "`n[*] " -ForegroundColor Cyan -NoNewline; Write-Host $msg }
 function Write-OK   { param([string]$msg) Write-Host "[OK] " -ForegroundColor Green -NoNewline; Write-Host $msg }
 function Write-Warn { param([string]$msg) Write-Host "[!] "  -ForegroundColor Yellow -NoNewline; Write-Host $msg }
@@ -33,7 +38,17 @@ if (-not (Test-Path $installPath)) {
 } else {
     Write-OK "Directorio existente"
 }
-New-Item -ItemType Directory -Path (Join-Path $installPath "logs") -Force | Out-Null
+$logsPath = Join-Path $installPath "logs"
+New-Item -ItemType Directory -Path $logsPath -Force | Out-Null
+# Restringir ACL del directorio de logs: SYSTEM y Administradores con control total,
+# usuario instalador con modificacion (necesario para escribir logs desde la tarea),
+# sin herencia de permisos permisivos del padre.
+try {
+    & icacls.exe $logsPath /inheritance:r /grant:r "NT AUTHORITY\SYSTEM:(OI)(CI)F" /grant:r "BUILTIN\Administrators:(OI)(CI)F" /grant:r "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)M" | Out-Null
+    Write-OK "ACL del directorio de logs configurada"
+} catch {
+    Write-Warn "No se pudo configurar el ACL del directorio de logs: $_"
+}
 
 # ===================== 2. COPIAR ARCHIVOS =====================
 # Si el instalador ya corre desde la carpeta de instalacion (web-install), no copia.
@@ -95,9 +110,41 @@ if ($gsPath) {
         try {
             $tempGs = Join-Path $env:TEMP "gs-installer.exe"
             Invoke-WebRequest -Uri $gsUrl -OutFile $tempGs -UseBasicParsing
-            Start-Process -FilePath $tempGs -ArgumentList "/S" -Wait
-            Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
-            $gsPath = Find-Gs
+
+            # Verificar integridad antes de ejecutar
+            $gsOk = $false
+            if ($gsExpectedSha256) {
+                $actual = (Get-FileHash -LiteralPath $tempGs -Algorithm SHA256).Hash
+                if ($actual -ne $gsExpectedSha256) {
+                    Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
+                    Write-Fail "El hash SHA-256 del instalador de Ghostscript no coincide."
+                    Write-Fail "  Esperado: $gsExpectedSha256"
+                    Write-Fail "  Obtenido: $actual"
+                    Write-Fail "Descarga abortada por seguridad. Reinstala manualmente desde ghostscript.com."
+                    pause
+                    exit 1
+                }
+                $gsOk = $true
+            } else {
+                # Sin hash conocido: verificar firma Authenticode
+                $sig = Get-AuthenticodeSignature -LiteralPath $tempGs
+                if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notlike "*Artifex*") {
+                    Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
+                    Write-Fail "La firma digital del instalador de Ghostscript no es valida o no pertenece a Artifex."
+                    Write-Fail "  Estado: $($sig.Status)"
+                    Write-Fail "  Firmante: $($sig.SignerCertificate.Subject)"
+                    Write-Fail "Descarga abortada por seguridad. Reinstala manualmente desde ghostscript.com."
+                    pause
+                    exit 1
+                }
+                $gsOk = $true
+            }
+
+            if ($gsOk) {
+                Start-Process -FilePath $tempGs -ArgumentList "/S" -Wait
+                Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
+                $gsPath = Find-Gs
+            }
         } catch {
             Write-Warn "Instalacion de Ghostscript fallo: $_"
         }
@@ -111,7 +158,7 @@ if (-not $gsPath) {
     exit 1
 }
 
-# ===================== 5. ACTUALIZAR CONFIG =====================
+# ===================== 4. ACTUALIZAR CONFIG =====================
 Write-Step "Actualizando config.json..."
 $configPath = Join-Path $installPath "config.json"
 if (Test-Path $configPath) {
@@ -128,7 +175,7 @@ if (Test-Path $configPath) {
     Write-Warn "config.json no encontrado; el Configurator creara uno al guardar."
 }
 
-# ===================== 6. TAREA PROGRAMADA (NIVEL USUARIO) =====================
+# ===================== 5. TAREA PROGRAMADA (NIVEL USUARIO) =====================
 Write-Step "Configurando tarea programada..."
 $monitorPath = Join-Path $installPath "LidaPrint.ps1"
 
@@ -139,13 +186,21 @@ if ($existingTask) {
         Write-OK "Tarea anterior eliminada (se re-registra apuntando a la instalacion estable)"
     } catch {
         # Tarea creada desde una sesion elevada: un proceso normal no puede
-        # borrarla. Pedir elevacion UNA vez (UAC) solo para eliminarla.
-        Write-Warn "La tarea existente fue creada como Administrador. Acepta el UAC para migrarla..."
+        # borrarla. Usar schtasks.exe /Delete como alternativa sin shell-exec.
+        Write-Warn "La tarea existente fue creada como Administrador. Intentando eliminar con schtasks..."
         try {
-            $elevArgs = '-NoProfile -Command "Unregister-ScheduledTask -TaskName ''' + $taskName + ''' -Confirm:$false"'
-            Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList $elevArgs
+            & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
         } catch {
-            Write-Warn "Elevacion cancelada."
+            Write-Warn "schtasks /Delete fallo: $_"
+        }
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            # Ultimo recurso: UAC via powershell elevado
+            Write-Warn "Acepta el UAC para eliminar la tarea con permisos de Administrador..."
+            try {
+                Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList "-NoProfile -NonInteractive -Command `"Unregister-ScheduledTask -TaskName '$taskName' -Confirm:`$false`""
+            } catch {
+                Write-Warn "Elevacion cancelada."
+            }
         }
     }
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
@@ -172,9 +227,19 @@ try {
 
 # Matar monitores huerfanos de instalaciones previas: des-registrar una tarea
 # NO mata su proceso, y dos monitores en paralelo compiten por los archivos.
-Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+try {
+    $orphans = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" }
+    foreach ($proc in $orphans) {
+        try {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+        } catch {
+            Write-Warn "No se pudo terminar el proceso huerfano PID $($proc.ProcessId): $_"
+        }
+    }
+} catch {
+    Write-Warn "No se pudo consultar Win32_Process para buscar monitores huerfanos: $_"
+}
 
 # Arrancar el monitor YA, sin esperar al proximo inicio de sesion.
 if ($taskRegistered) {
@@ -186,7 +251,7 @@ if ($taskRegistered) {
     }
 }
 
-# ===================== 7. PATH DEL USUARIO =====================
+# ===================== 6. PATH DEL USUARIO =====================
 # Uso tecnico por consola: escribir 'lidaprint' abre el Configurator
 # (resuelve LidaPrint.bat via PATHEXT). Solo PATH de usuario, sin admin.
 Write-Step "Agregando la instalacion al PATH del usuario..."
@@ -199,7 +264,7 @@ if (($userPath -split ';') -notcontains $installPath) {
     Write-OK "La instalacion ya esta en el PATH"
 }
 
-# ===================== 8. RESUMEN Y CONFIGURATOR =====================
+# ===================== 7. RESUMEN Y CONFIGURATOR =====================
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "  INSTALACION COMPLETADA" -ForegroundColor Green
