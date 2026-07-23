@@ -9,7 +9,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Continue"
 
 # ===================== CARGAR CONFIGURACION =====================
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -52,7 +52,19 @@ function Save-Config {
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, 'FullControl', 'Allow')
         $acl.AddAccessRule($rule)
         Set-Acl $configPath $acl
-    } catch { }
+    } catch {
+        # No es fatal: la config se guardo. Advertir al operador.
+        $errDetail = $_.Exception.Message
+        try {
+            $logDir = Join-Path $scriptDir "logs"
+            if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+            Add-Content -Path (Join-Path $logDir "PrintLog_$(Get-Date -Format 'yyyy-MM').txt") -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [WARN] No se pudo restringir el ACL de config.json: $errDetail" -Encoding UTF8
+        } catch { }
+        [System.Windows.Forms.MessageBox]::Show(
+            "La configuracion se guardo, pero no se pudo restringir el acceso al archivo config.json.`n`nDetalle: $errDetail`n`nOtros usuarios del sistema podrian leer la API Key si existe.",
+            "Advertencia de seguridad", "OK", "Warning"
+        ) | Out-Null
+    }
 }
 
 $config = Load-Config
@@ -164,14 +176,26 @@ Set-DarkTheme $form
 # ===================== LOGO =====================
 $logoPath = Join-Path $scriptDir "logo.png"
 if (Test-Path $logoPath) {
-    $logoImg = [System.Drawing.Image]::FromFile($logoPath)
-    $form.Icon = [System.Drawing.Icon]::FromHandle($logoImg.GetHicon())
+    # Cargar el bitmap una sola vez y mantenerlo en scope de script para
+    # evitar que el GC lo libere mientras el formulario lo necesita.
+    $script:logoBitmap = New-Object System.Drawing.Bitmap($logoPath)
+    # Convertir a Icon via GetHicon() y liberar el handle de GDI inmediatamente
+    # con DestroyIcon para evitar leak. El Icon resultante tiene su propia copia.
+    $hicon = $script:logoBitmap.GetHicon()
+    $script:formIcon = [System.Drawing.Icon]::FromHandle($hicon)
+    $form.Icon = $script:formIcon
+    # Liberar el handle GDI original (el Icon ya tiene su propia copia interna)
+    try {
+        $destroySig = 'public static extern bool DestroyIcon(IntPtr handle);'
+        Add-Type -MemberDefinition $destroySig -Name "IconHelper" -Namespace "NativeGdi" -ErrorAction SilentlyContinue
+        [NativeGdi.IconHelper]::DestroyIcon($hicon) | Out-Null
+    } catch { }
 
     $picLogo = New-Object System.Windows.Forms.PictureBox
     $picLogo.Location = New-Object System.Drawing.Point(10, 8)
     $picLogo.Size = New-Object System.Drawing.Size(40, 40)
     $picLogo.SizeMode = "Zoom"
-    $picLogo.Image = [System.Drawing.Image]::FromFile($logoPath)
+    $picLogo.Image = $script:logoBitmap
     $form.Controls.Add($picLogo)
 
     $lblTitle = New-Object System.Windows.Forms.Label
@@ -1033,7 +1057,9 @@ $btnTest.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("Seleccione una impresora.", "Error", "OK", "Error"); return
     }
 
-    $testPdf = Join-Path $env:TEMP "test_invoice_F-00000001.pdf"
+    $tmpDir = Join-Path $scriptDir "temp"
+    if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
+    $testPdf = Join-Path $tmpDir "test_invoice_F-00000001.pdf"
     New-TestPdf $testPdf "FACTURA DE PRUEBA"
 
     # Prueba con Ghostscript (mismo motor que usa el monitor)
@@ -1244,7 +1270,7 @@ $toolTip.SetToolTip($txtPattern,   "Expresion regular. El nombre del archivo deb
 $toolTip.SetToolTip($chkUsePattern,"Filtra por nombre en modo local. Se desactiva al usar la API.")
 $toolTip.SetToolTip($chkContinuous,"Activar solo para impresoras matriciales con papel tractor.")
 $toolTip.SetToolTip($nudLinePitch, "Distancia en mm entre lineas para forma continua. 4.23mm = 6 LPI.")
-$toolTip.SetToolTip($txtApiKey,    "Dejar vacio para no requerir autenticacion.")
+$toolTip.SetToolTip($txtApiKey,    "Obligatoria cuando la API esta activa. Sin una API Key el listener no arranca.")
 $toolTip.SetToolTip($chkWeb,       "En modo API, Odoo decide que archivos se imprimen via HTTP.")
 $toolTip.SetToolTip($nudScale,     "Porcentaje del tamano original (10-200%).")
 
