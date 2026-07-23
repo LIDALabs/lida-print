@@ -201,26 +201,28 @@ function Invoke-PrintGhostscript {
     if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
     $gsArgs += @("-dDEVICEWIDTHPOINTS=$wPts", "-dDEVICEHEIGHTPOINTS=$hPts", "-dFIXEDMEDIA", "-dFitPage")
 
-    # Margenes + desplazamiento superior + escala del usuario, via BeginPage:
-    # el contenido se traslada al origen del area util (izq/abajo) y se escala
-    # para caber dentro de los margenes. topOffset suma al margen superior.
+    # Margenes = DESPLAZAMIENTO puro por lado, sin escalar. Cada margen empuja
+    # el contenido en su direccion: izquierdo -> derecha, derecho -> izquierda,
+    # superior -> abajo, inferior -> arriba (eje Y de PostScript apunta arriba).
+    # Si el contenido queda fuera del papel se recorta; para achicarlo esta
+    # Escala (%). topOffset (forma continua) empuja hacia abajo.
     $mL = [double]$config.marginLeft   * 2.835
     $mR = [double]$config.marginRight  * 2.835
     $mT = [double]$config.marginTop    * 2.835
     $mB = [double]$config.marginBottom * 2.835
-    if ($config.continuousForm -and $config.topOffset) { $mT += [double]$config.topOffset * 2.835 }
+    $offX = [math]::Round($mL - $mR, 2)
+    $offY = [math]::Round($mB - $mT, 2)
+    if ($config.continuousForm -and $config.topOffset) {
+        $offY = [math]::Round($offY - ([double]$config.topOffset * 2.835), 2)
+    }
     $userScale = 1.0
-    if ($config.scale -and $config.scale -ne 100) { $userScale = [double]$config.scale / 100.0 }
+    if ($config.scale -and $config.scale -ne 100) { $userScale = [math]::Round([double]$config.scale / 100.0, 4) }
 
     $pageCmd = $null
-    if (($mL + $mR + $mT + $mB) -gt 0 -or $userScale -ne 1.0) {
-        $sx = ($wPts - $mL - $mR) / $wPts
-        $sy = ($hPts - $mT - $mB) / $hPts
-        $s = [math]::Round([math]::Min($sx, $sy) * $userScale, 4)
-        if ($s -le 0) { $s = 0.1 }  # margenes absurdos: no romper, imprimir chico
-        $offX = [math]::Round($mL, 2)
-        $offY = [math]::Round($mB, 2)
-        $pageCmd = "<< /BeginPage { pop $offX $offY translate $s $s scale } >> setpagedevice"
+    if ($offX -ne 0 -or $offY -ne 0 -or $userScale -ne 1.0) {
+        # translate primero, scale despues: la escala queda anclada en el punto
+        # ya desplazado, asi los margenes no se re-escalan.
+        $pageCmd = "<< /BeginPage { pop $offX $offY translate $userScale $userScale scale } >> setpagedevice"
     }
 
     $gsArgs += "-sOutputFile=%printer%$($config.printer)"

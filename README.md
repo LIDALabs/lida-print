@@ -170,8 +170,11 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 | Ancho / Alto | En mm (50-2000) | 210 / 297 |
 | Margenes | Superior/Inferior/Izq/Der en mm — aplicados por **Ghostscript** | 0 |
 
-> **Nota sobre margenes:** el contenido se traslada y escala para caber dentro del area
-> util definida por los margenes (y el desplazamiento superior en forma continua).
+> **Nota sobre margenes:** cada margen **empuja** el contenido en su direccion, sin
+> escalarlo: izquierdo lo mueve a la derecha, derecho a la izquierda, superior hacia
+> abajo, inferior hacia arriba. Margenes opuestos se restan (izq 20 + der 5 = corrimiento
+> neto de 15mm a la derecha). Si el contenido queda fuera del papel, se recorta — para
+> achicarlo usa **Escala (%)**. El desplazamiento superior de forma continua empuja hacia abajo.
 
 ### Pestana 3: Forma Continua
 
@@ -286,7 +289,7 @@ y dejo de imprimir".
 | `useCustomPaper` | bool | Usa dimensiones manuales |
 | `scale` | int | Escala en % |
 | `dpi` | int | Resolucion |
-| `marginTop/Bottom/Left/Right` | int | Margenes en mm |
+| `marginTop/Bottom/Left/Right` | int | Desplazamiento del contenido en mm (cada margen empuja en su direccion) |
 | `continuousForm` | bool | Modo papel continuo |
 | `formLength` | int | Largo del formulario en mm |
 | `topOffset` | int | Desplazamiento superior en mm (forma continua, motor Ghostscript) |
@@ -459,7 +462,7 @@ gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumC
 | `-rN` | DPI de rasterizado (pestana Impresion: 203, 300, etc.) |
 | `-dNumCopies=N` | Copias |
 | `-dDEVICEWIDTHPOINTS / HEIGHTPOINTS -dFIXEDMEDIA -dFitPage` | Tamano del medio en puntos (siempre explicito; landscape intercambia ancho/alto) |
-| `-c "<< /BeginPage ... >>"` | Margenes, desplazamiento superior y escala: traslada el contenido al area util y lo escala para caber |
+| `-c "<< /BeginPage ... >>"` | Margenes (desplazamiento puro por lado), topOffset y escala del usuario |
 | `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox en la pestana Calidad) |
 
 Todas las funcionalidades de configuracion (margenes, orientacion, paper size, escala,
