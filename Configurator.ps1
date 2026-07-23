@@ -291,10 +291,11 @@ $grpQuality.Controls.Add($lblDPI)
 $cmbDPI = New-Object System.Windows.Forms.ComboBox
 $cmbDPI.Location = New-Object System.Drawing.Point(230, 23)
 $cmbDPI.Size = New-Object System.Drawing.Size(80, 21)
-$cmbDPI.DropDownStyle = "DropDownList"
+# DropDown (editable): permite escribir un DPI a mano ademas de los presets.
+# Se valida al Guardar (72-1200).
+$cmbDPI.DropDownStyle = "DropDown"
 @("72", "96", "150", "203", "240", "300", "600") | ForEach-Object { $cmbDPI.Items.Add($_) | Out-Null }
-$dpiIdx = $cmbDPI.Items.IndexOf($config.dpi.ToString())
-if ($dpiIdx -ge 0) { $cmbDPI.SelectedIndex = $dpiIdx } else { $cmbDPI.SelectedIndex = $cmbDPI.Items.IndexOf("300") }
+$cmbDPI.Text = if ($config.dpi) { $config.dpi.ToString() } else { "300" }
 Set-DarkTheme $cmbDPI
 $grpQuality.Controls.Add($cmbDPI)
 
@@ -378,7 +379,27 @@ $lblmm.Size = New-Object System.Drawing.Size(30, 20)
 Set-DarkTheme $lblmm
 $grpPaper.Controls.Add($lblmm)
 
-$chkCustom.Add_CheckedChanged({ $nudWidth.Enabled = $chkCustom.Checked; $nudHeight.Enabled = $chkCustom.Checked })
+# Acople bidireccional: el check de tamano personalizado y el combo de Paper
+# Size nunca quedan en estados contradictorios.
+$chkCustom.Add_CheckedChanged({
+    $nudWidth.Enabled = $chkCustom.Checked
+    $nudHeight.Enabled = $chkCustom.Checked
+    if ($chkCustom.Checked) {
+        $cmbPaper.SelectedIndex = $cmbPaper.Items.IndexOf("Custom")
+        $cmbPaper.Enabled = $false
+    } else {
+        $cmbPaper.Enabled = $true
+        if ($cmbPaper.SelectedItem -eq "Custom") { $cmbPaper.SelectedIndex = $cmbPaper.Items.IndexOf("A4") }
+    }
+})
+$cmbPaper.Add_SelectedIndexChanged({
+    if ($cmbPaper.SelectedItem -eq "Custom" -and -not $chkCustom.Checked) { $chkCustom.Checked = $true }
+})
+# Estado inicial coherente al abrir con configuracion cargada
+if ($chkCustom.Checked) {
+    $cmbPaper.SelectedIndex = $cmbPaper.Items.IndexOf("Custom")
+    $cmbPaper.Enabled = $false
+}
 
 $grpMargins = New-Object System.Windows.Forms.GroupBox
 $grpMargins.Text = "Margenes (mm) - cada uno empuja el contenido en su direccion, sin escalarlo"
@@ -961,7 +982,8 @@ $btnTest.Add_Click({
     New-TestPdf $testPdf "FACTURA DE PRUEBA"
 
     # Prueba con Ghostscript (mismo motor que usa el monitor)
-    $dpiTest = if ($cmbDPI.SelectedItem) { $cmbDPI.SelectedItem } else { "300" }
+    $dpiTest = 300
+    if (-not [int]::TryParse($cmbDPI.Text, [ref]$dpiTest) -or $dpiTest -lt 72 -or $dpiTest -gt 1200) { $dpiTest = 300 }
     $gsTestArgs = "-dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r$dpiTest -dNumCopies=1 `"-sOutputFile=%printer%$($cmbPrinter.SelectedItem)`" -f `"$testPdf`""
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -1003,6 +1025,10 @@ $btnSave.Add_Click({
     if (-not $txtGs.Text -or -not (Test-Path $txtGs.Text)) {
         [System.Windows.Forms.MessageBox]::Show("La ruta de Ghostscript no es valida. Usa 'Detectar' en la pestana Calidad o re-ejecuta el instalador.", "Error", "OK", "Error"); return
     }
+    $dpiValue = 0
+    if (-not [int]::TryParse($cmbDPI.Text, [ref]$dpiValue) -or $dpiValue -lt 72 -or $dpiValue -gt 1200) {
+        [System.Windows.Forms.MessageBox]::Show("El DPI debe ser un numero entre 72 y 1200 (ej: 203, 300, 600).", "Error", "OK", "Error"); return
+    }
     if ($chkUsePattern.Checked) {
         try { [void][regex]::new($txtPattern.Text) }
         catch {
@@ -1026,7 +1052,7 @@ $btnSave.Add_Click({
         paperHeight    = [int]$nudHeight.Value
         useCustomPaper = $chkCustom.Checked
         scale          = [int]$nudScale.Value
-        dpi            = [int]$cmbDPI.SelectedItem
+        dpi            = $dpiValue
         marginTop      = [int]$nudMTop.Value
         marginBottom   = [int]$nudMBot.Value
         marginLeft     = [int]$nudMLeft.Value
@@ -1158,7 +1184,7 @@ $toolTip.AutoPopDelay = 8000
 $toolTip.InitialDelay = 400
 $toolTip.ReshowDelay  = 200
 $toolTip.SetToolTip($nudCopias,    "Cantidad de copias que se imprimen de cada documento.")
-$toolTip.SetToolTip($cmbDPI,       "Resolucion de impresion. 300 es suficiente para la mayoria de impresoras.")
+$toolTip.SetToolTip($cmbDPI,       "Resolucion de impresion (72-1200). Elegi un preset o escribi el valor a mano. 203 para matriciales/termicas, 300 para laser.")
 $toolTip.SetToolTip($txtPattern,   "Expresion regular. El nombre del archivo debe coincidir completamente.")
 $toolTip.SetToolTip($chkUsePattern,"Filtra por nombre en modo local. Se desactiva al usar la API.")
 $toolTip.SetToolTip($chkContinuous,"Activar solo para impresoras matriciales con papel tractor.")

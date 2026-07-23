@@ -159,14 +159,14 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 | Copias | Copias por documento (1-10) | 2 |
 | Orientacion | `portrait` / `landscape` | portrait |
 | Escala (%) | Porcentaje del tamano original (10-200) | 100 |
-| DPI | Resolucion de impresion: 72-600, incluye **203** (matriciales/termicas) | 300 |
+| DPI | Resolucion de impresion: presets (203 matriciales, 300 laser, etc.) **o valor escrito a mano** (72-1200) | 300 |
 
 ### Pestana 2: Papel
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
 | Paper Size | A4, Letter, Legal, Tabloid, A5, Continuo, Custom | A4 |
-| Tamano personalizado | Habilita ancho/alto manual | desactivado |
+| Tamano personalizado | Habilita ancho/alto manual; al marcarlo el Paper Size pasa a `Custom` automaticamente (y viceversa) | desactivado |
 | Ancho / Alto | En mm (50-2000) | 210 / 297 |
 | Margenes | Superior/Inferior/Izq/Der en mm — aplicados por **Ghostscript** | 0 |
 
