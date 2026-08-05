@@ -56,16 +56,11 @@ if ($MergeOnly) { Write-Output "Merged: $mergedPath"; return }
 # ---- Windows-only from here ----
 Import-Module ps2exe
 
-# Best-effort icon from logo.png; the build proceeds without one on failure.
-$iconPath = $null
-try {
-    Add-Type -AssemblyName System.Drawing
-    $bmp = [System.Drawing.Bitmap]::FromFile((Join-Path $repoRoot "logo.png"))
-    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-    $iconPath = Join-Path $OutDir "LidaPrint.ico"
-    $fs = [IO.File]::Create($iconPath)
-    $icon.Save($fs); $fs.Close(); $bmp.Dispose()
-} catch { $iconPath = $null }
+# Icon: use the pre-generated multi-size .ico committed in build/. Runtime
+# conversion from PNG via GetHicon writes an icon resource csc rejects
+# (CS1567), so the build falls back to no icon if the file is absent.
+$iconPath = Join-Path $PSScriptRoot "LidaPrint.ico"
+if (-not (Test-Path $iconPath)) { $iconPath = $null }
 
 $exePath = Join-Path $OutDir "LidaPrint.exe"
 $ps2exeArgs = @{
