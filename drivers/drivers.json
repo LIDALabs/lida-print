@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "drivers": [
+    {
+      "id": "epson-tm-u220pd",
+      "name": "EPSON TM-U220PD (M188D)",
+      "file": "drivers/epson-tm-u220pd/APD_459aEWM_e.zip",
+      "type": "zip",
+      "setupPath": "APD_459aE.exe",
+      "sha256": "0AD8559EEFD7FF62FCF14723F3CB7DAC02A552453F47AD0279AD4285DA0F0FB3",
+      "silentArgs": "",
+      "notes": "Ticketera matricial 76mm. APD v4.59aE — soporta TM-U220A/B/D."
+    },
+    {
+      "id": "canon-lbp6030",
+      "name": "Canon imageCLASS LBP6030/6030B/6030w",
+      "file": "drivers/canon-lbp6030/LBP6030_V2111_WP_EN.exe",
+      "type": "exe",
+      "sha256": "6FE711504E1738EE8C3DB4816E4F36EE9528219A26929F2F438702E23B2B42EC",
+      "silentArgs": "",
+      "notes": "UFRII LT Printer Driver Ver.21.11 para Windows 64-bit."
+    }
+  ]
+}
