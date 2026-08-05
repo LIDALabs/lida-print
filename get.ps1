@@ -226,7 +226,11 @@ $trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
             -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
+try {
+    Start-ScheduledTask -TaskName $taskName
+} catch {
+    Write-Warn "El servicio arrancara en el proximo inicio de sesion."
+}
 
 # --- 9. Start Menu shortcut ---
 $shortcutDir = [Environment]::GetFolderPath("Programs")
