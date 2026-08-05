@@ -53,7 +53,10 @@ $tempExe = Join-Path $tempDir "LidaPrint.exe.download"
 try {
     Write-Step "Descargando LidaPrint.exe $($release.tag_name)..."
     Invoke-WebRequest -Uri $exeAsset.browser_download_url -OutFile $tempExe -UseBasicParsing
-    $sums = (Invoke-WebRequest -Uri $sumsAsset.browser_download_url -UseBasicParsing).Content
+    # GitHub serves release assets as application/octet-stream, so .Content
+    # arrives as byte[] on Windows PowerShell 5.1 — decode it explicitly.
+    $sumsRaw = (Invoke-WebRequest -Uri $sumsAsset.browser_download_url -UseBasicParsing).Content
+    $sums = if ($sumsRaw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($sumsRaw) } else { [string]$sumsRaw }
     if (-not (Test-Sha256Sum -FilePath $tempExe -SumsContent $sums -FileName "LidaPrint.exe")) {
         Write-Fail "La verificacion SHA256 fallo. Instalacion abortada."; throw "SHA256 verification failed for LidaPrint.exe"
     }
