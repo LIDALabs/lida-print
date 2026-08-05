@@ -69,6 +69,51 @@ function Save-Config {
 
 $config = Load-Config
 
+# ===================== DRIVER FUNCTIONS =====================
+function Get-DriverBaseRef {
+    if ($Global:LidaPrintVersion -and $Global:LidaPrintVersion -notmatch 'dev') { "v$($Global:LidaPrintVersion)" } else { "main" }
+}
+
+function Get-DriverManifest {
+    $url = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)/drivers/drivers.json"
+    try {
+        Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 30
+    } catch {
+        # Fallback: an installed exe whose tag was deleted, or dev checkout.
+        try { Invoke-RestMethod -Uri "https://raw.githubusercontent.com/LIDALabs/lida-print/main/drivers/drivers.json" -UseBasicParsing -TimeoutSec 30 }
+        catch { $null }
+    }
+}
+
+function Install-PrinterDriver {
+    param(
+        [Parameter(Mandatory)]$Driver,
+        [Parameter(Mandatory)][string]$BaseUrl
+    )
+    $url = if ($Driver.file -match '^https?://') { $Driver.file } else { "$BaseUrl/$($Driver.file)" }
+    $ext = [IO.Path]::GetExtension($Driver.file)
+    $tmp = Join-Path $env:TEMP ("lidadrv_" + $Driver.id + $ext)
+    $extractDir = $null
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+        if ($actual -ne $Driver.sha256) { throw "La verificacion SHA256 del driver fallo" }
+        if ($Driver.type -eq "zip") {
+            $extractDir = Join-Path $env:TEMP ("lidadrv_" + $Driver.id + "_x")
+            Expand-Archive -LiteralPath $tmp -DestinationPath $extractDir -Force
+            $setup = Join-Path $extractDir $Driver.setupPath
+        } else {
+            $setup = $tmp
+        }
+        $spArgs = @{ FilePath = $setup; Wait = $true; PassThru = $true }
+        if ($Driver.silentArgs) { $spArgs.ArgumentList = $Driver.silentArgs }
+        (Start-Process @spArgs).ExitCode
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        if ($extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 # ===================== DETECTAR MOTOR DE IMPRESION =====================
 function Find-Ghostscript {
     $local = Join-Path $scriptDir "bin\gswin64c.exe"
@@ -155,6 +200,10 @@ function Set-DarkTheme {
         $control.BackColor = [Drawing.Color]::FromArgb(220, 220, 230)
         $control.ForeColor = [Drawing.Color]::Black
         $control.FlatStyle = "System"
+    } elseif ($control -is [System.Windows.Forms.ListBox]) {
+        $control.BackColor = $dkInput
+        $control.ForeColor = $dkText
+        $control.BorderStyle = "FixedSingle"
     } elseif ($control -is [System.Windows.Forms.Button]) {
         $control.BackColor = $dkBtnBg
         $control.ForeColor = $dkText
@@ -1027,6 +1076,101 @@ $lblEx.ForeColor = $dkAccent
 $grpExamples.Controls.Add($lblEx)
 
 $tabs.TabPages.Add($t5)
+
+# ===================== TAB 7: DRIVERS =====================
+$tDrv = New-Object System.Windows.Forms.TabPage
+$tDrv.Text = "Drivers"
+Set-DarkTheme $tDrv
+
+$grpDrv = New-Object System.Windows.Forms.GroupBox
+$grpDrv.Text = "Drivers de impresora disponibles"
+$grpDrv.Location = New-Object System.Drawing.Point(10, 10)
+$grpDrv.Size = New-Object System.Drawing.Size(590, 330)
+Set-DarkTheme $grpDrv
+
+$lstDrv = New-Object System.Windows.Forms.ListBox
+$lstDrv.Location = New-Object System.Drawing.Point(15, 25)
+$lstDrv.Size = New-Object System.Drawing.Size(400, 200)
+Set-DarkTheme $lstDrv
+
+$lblDrvNotes = New-Object System.Windows.Forms.Label
+$lblDrvNotes.Location = New-Object System.Drawing.Point(15, 235)
+$lblDrvNotes.Size = New-Object System.Drawing.Size(560, 30)
+$lblDrvNotes.Text = ""
+Set-DarkTheme $lblDrvNotes
+
+$btnDrvInstall = New-Object System.Windows.Forms.Button
+$btnDrvInstall.Text = "Instalar driver seleccionado"
+$btnDrvInstall.Location = New-Object System.Drawing.Point(15, 275)
+$btnDrvInstall.Size = New-Object System.Drawing.Size(200, 30)
+Set-DarkTheme $btnDrvInstall
+
+$lblDrvStatus = New-Object System.Windows.Forms.Label
+$lblDrvStatus.Location = New-Object System.Drawing.Point(230, 280)
+$lblDrvStatus.Size = New-Object System.Drawing.Size(345, 25)
+$lblDrvStatus.Text = ""
+Set-DarkTheme $lblDrvStatus
+
+$script:driverManifest = $null
+$tDrv.Add_Enter({
+    if (-not $script:driverManifest) {
+        $lblDrvStatus.Text = "Cargando lista de drivers..."
+        $script:driverManifest = Get-DriverManifest
+        $lstDrv.Items.Clear()
+        if ($script:driverManifest) {
+            foreach ($d in $script:driverManifest.drivers) { [void]$lstDrv.Items.Add($d.name) }
+            $lblDrvStatus.Text = ""
+        } else {
+            $lblDrvStatus.Text = "Sin conexion: no se pudo cargar la lista de drivers."
+        }
+    }
+})
+
+$lstDrv.Add_SelectedIndexChanged({
+    if ($lstDrv.SelectedIndex -ge 0) {
+        $lblDrvNotes.Text = $script:driverManifest.drivers[$lstDrv.SelectedIndex].notes
+    }
+})
+
+$btnDrvInstall.Add_Click({
+    if ($lstDrv.SelectedIndex -lt 0) {
+        [System.Windows.Forms.MessageBox]::Show("Seleccione un driver de la lista.", "LidaPrint") | Out-Null
+        return
+    }
+    $drv = $script:driverManifest.drivers[$lstDrv.SelectedIndex]
+    $baseUrl = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)"
+    $btnDrvInstall.Enabled = $false
+    $lblDrvStatus.Text = "Descargando e instalando $($drv.name)..."
+    $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    try {
+        $code = Install-PrinterDriver -Driver $drv -BaseUrl $baseUrl
+        if ($code -eq 0) {
+            $lblDrvStatus.Text = "Driver instalado correctamente."
+            [System.Windows.Forms.MessageBox]::Show("$($drv.name) instalado correctamente.", "LidaPrint") | Out-Null
+        } else {
+            $lblDrvStatus.Text = "El instalador devolvio el codigo $code."
+            [System.Windows.Forms.MessageBox]::Show("El instalador de $($drv.name) devolvio el codigo $code.", "LidaPrint") | Out-Null
+        }
+    } catch {
+        $lblDrvStatus.Text = "Error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("No se pudo instalar el driver: $($_.Exception.Message)", "LidaPrint",
+            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } finally {
+        $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        $btnDrvInstall.Enabled = $true
+        # Spec: driver install results are also recorded in the log file.
+        try {
+            $logDir = Join-Path $scriptDir "logs"
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            Add-Content -Path (Join-Path $logDir ("PrintLog_{0:yyyy-MM}.txt" -f (Get-Date))) `
+                -Value ("[{0:yyyy-MM-dd HH:mm:ss}] [DRIVER] {1} -> {2}" -f (Get-Date), $drv.id, $lblDrvStatus.Text)
+        } catch { }
+    }
+})
+
+$grpDrv.Controls.AddRange(@($lstDrv, $lblDrvNotes, $btnDrvInstall, $lblDrvStatus))
+$tDrv.Controls.Add($grpDrv)
+$tabs.TabPages.Add($tDrv)
 
 $form.Controls.Add($tabs)
 
