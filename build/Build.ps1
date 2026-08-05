@@ -78,7 +78,7 @@ $ps2exeArgs = @{
     version    = ($Version -replace '[^\d.].*$', '')
 }
 if ($iconPath) { $ps2exeArgs.iconFile = $iconPath }
-Invoke-ps2exe @ps2exeArgs
+Invoke-ps2exe @ps2exeArgs -Verbose
 
 $hash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
 Set-Content -Path (Join-Path $OutDir "SHA256SUMS.txt") -Value "$hash  LidaPrint.exe" -Encoding ASCII
