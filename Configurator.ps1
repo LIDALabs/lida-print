@@ -16,22 +16,29 @@ $scriptDir = if ($Global:LidaPrintExeDir) { $Global:LidaPrintExeDir } else { Spl
 $configPath = Join-Path $scriptDir "config.json"
 
 function Load-Config {
+    $defaults = [ordered]@{
+        printer = ""; copies = 2; orientation = "portrait"
+        paperSize = "A4"; paperWidth = 210; paperHeight = 297
+        useCustomPaper = $false; scale = 100; dpi = 300
+        marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
+        continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
+        gsPath = ""; renderAsImage = $false
+        downloadFolder = ""; installPath = ""
+        autoStart = $true; enableLogging = $true
+        usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
+        webEnabled = $false; webPort = 8080; webApiKey = ""
+    }
     $cfg = $null
     if (Test-Path $configPath) {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
     }
-    if (-not $cfg) {
-        $cfg = [PSCustomObject]@{
-            printer = ""; copies = 2; orientation = "portrait"
-            paperSize = "A4"; paperWidth = 210; paperHeight = 297
-            useCustomPaper = $false; scale = 100; dpi = 300
-            marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
-            continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
-            gsPath = ""; renderAsImage = $false
-            downloadFolder = ""; installPath = ""
-            autoStart = $true; enableLogging = $true
-            usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
-            webEnabled = $false; webPort = 8080; webApiKey = ""
+    if (-not $cfg) { $cfg = [PSCustomObject]@{} }
+    # Backfill keys that are absent or null (minimal or hand-edited configs)
+    # so the UI never binds a null into a NumericUpDown or ComboBox.
+    $present = $cfg.PSObject.Properties.Name
+    foreach ($key in $defaults.Keys) {
+        if ($present -notcontains $key -or $null -eq $cfg.$key) {
+            $cfg | Add-Member -NotePropertyName $key -NotePropertyValue $defaults[$key] -Force
         }
     }
     # Defaults dinamicos: la carpeta de descargas del usuario actual si esta vacia.

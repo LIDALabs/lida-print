@@ -190,9 +190,20 @@ if (-not $gsPath) {
 $configPath = Join-Path $installPath "config.json"
 if (-not (Test-Path $configPath)) {
     $defaultDownload = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
-    @{ printer = ""; copies = 2; gsPath = $gsPath; installPath = $installPath
-       downloadFolder = $defaultDownload; autoStart = $true; enableLogging = $true } |
-        ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+    # Full key set: the Configurator binds every key to a control, so a
+    # partial config would inject nulls into NumericUpDown/ComboBox values.
+    [ordered]@{
+        printer = ""; copies = 2; orientation = "portrait"
+        paperSize = "A4"; paperWidth = 210; paperHeight = 297
+        useCustomPaper = $false; scale = 100; dpi = 300
+        marginTop = 0; marginBottom = 0; marginLeft = 0; marginRight = 0
+        continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
+        gsPath = $gsPath; renderAsImage = $false
+        downloadFolder = $defaultDownload; installPath = $installPath
+        autoStart = $true; enableLogging = $true
+        usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
+        webEnabled = $false; webPort = 8080; webApiKey = ""
+    } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
 } else {
     # Upgrade: refresh gsPath/installPath, preserve the rest.
     $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
