@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build LidaPrint.exe
+        shell: pwsh
+        run: |
+          Install-Module ps2exe -Force -Scope CurrentUser
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          ./build/Build.ps1 -Version $version
+
+      - name: Smoke check
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/LidaPrint.exe)) { throw "exe missing" }
+          $sums = Get-Content dist/SHA256SUMS.txt -Raw
+          $hash = (Get-FileHash dist/LidaPrint.exe -Algorithm SHA256).Hash
+          if ($sums -notmatch $hash) { throw "hash mismatch" }
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LidaPrint.exe
+            dist/SHA256SUMS.txt
