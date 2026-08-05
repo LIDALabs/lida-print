@@ -12,7 +12,7 @@
 $ErrorActionPreference = "Stop"
 
 # ===================== CARGAR CONFIGURACION =====================
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = if ($Global:LidaPrintExeDir) { $Global:LidaPrintExeDir } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $configPath = Join-Path $scriptDir "config.json"
 
 # Traza de arranque INCONDICIONAL, antes de validar nada. El monitor corre con

@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = "Continue"
 
 # ===================== CARGAR CONFIGURACION =====================
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = if ($Global:LidaPrintExeDir) { $Global:LidaPrintExeDir } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $configPath = Join-Path $scriptDir "config.json"
 
 function Load-Config {
@@ -175,10 +175,20 @@ Set-DarkTheme $form
 
 # ===================== LOGO =====================
 $logoPath = Join-Path $scriptDir "logo.png"
-if (Test-Path $logoPath) {
+$logoImage = $null
+if ($Global:LidaPrintLogoB64) {
+    try {
+        $ms = New-Object System.IO.MemoryStream(,[Convert]::FromBase64String($Global:LidaPrintLogoB64))
+        $logoImage = [System.Drawing.Image]::FromStream($ms)
+    } catch { $logoImage = $null }
+}
+if (-not $logoImage -and (Test-Path $logoPath)) {
+    $logoImage = [System.Drawing.Image]::FromFile($logoPath)
+}
+if ($logoImage) {
     # Cargar el bitmap una sola vez y mantenerlo en scope de script para
     # evitar que el GC lo libere mientras el formulario lo necesita.
-    $script:logoBitmap = New-Object System.Drawing.Bitmap($logoPath)
+    $script:logoBitmap = $logoImage
     # Convertir a Icon via GetHicon() y liberar el handle de GDI inmediatamente
     # con DestroyIcon para evitar leak. El Icon resultante tiene su propia copia.
     $hicon = $script:logoBitmap.GetHicon()
