@@ -179,6 +179,7 @@ $logoImage = $null
 if ($Global:LidaPrintLogoB64) {
     try {
         $ms = New-Object System.IO.MemoryStream(,[Convert]::FromBase64String($Global:LidaPrintLogoB64))
+        $script:logoStream = $ms
         $logoImage = [System.Drawing.Image]::FromStream($ms)
     } catch { $logoImage = $null }
 }
