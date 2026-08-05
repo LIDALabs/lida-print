@@ -95,7 +95,7 @@ function Install-PrinterDriver {
     $tmp = Join-Path $env:TEMP ("lidadrv_" + $Driver.id + $ext)
     $extractDir = $null
     try {
-        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 600
         $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
         if ($actual -ne $Driver.sha256) { throw "La verificacion SHA256 del driver fallo" }
         if ($Driver.type -eq "zip") {
@@ -1141,6 +1141,7 @@ $btnDrvInstall.Add_Click({
     $baseUrl = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)"
     $btnDrvInstall.Enabled = $false
     $lblDrvStatus.Text = "Descargando e instalando $($drv.name)..."
+    $lblDrvStatus.Refresh(); [System.Windows.Forms.Application]::DoEvents()
     $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     try {
         $code = Install-PrinterDriver -Driver $drv -BaseUrl $baseUrl
@@ -1373,6 +1374,10 @@ $btnSave.Add_Click({
             Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
                 Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
                 ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            # Also kill orphan compiled exe monitors (-Service mode), excluding this process
+            Get-CimInstance Win32_Process -Filter "Name = 'LidaPrint.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -like "*-Service*" -and $_.ProcessId -ne $PID } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             Start-Sleep -Milliseconds 500
             Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
         } catch {
@@ -1416,6 +1421,11 @@ $btnTestMonitor.Add_Click({
     }
     $monitorProc = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" }
+    if (-not $monitorProc) {
+        # Also check for the compiled exe monitor (-Service mode), excluding this process
+        $monitorProc = Get-CimInstance Win32_Process -Filter "Name='LidaPrint.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like "*-Service*" -and $_.ProcessId -ne $PID }
+    }
     if (-not $monitorProc) {
         [System.Windows.Forms.MessageBox]::Show("El monitor NO esta corriendo. Guarda la configuracion (boton Guardar) para iniciarlo y proba de nuevo.", "Monitor detenido", "OK", "Warning"); return
     }

@@ -41,7 +41,7 @@ if ($task) {
 Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Get-Process -Name "LidaPrint" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "LidaPrint" -ErrorAction SilentlyContinue | Where-Object Id -ne $PID | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 1000
 
 # 3. Eliminar instalacion actual
@@ -90,6 +90,6 @@ Write-Host ""
 if ($Global:LidaPrintExeDir) {
     $self = Join-Path $Global:LidaPrintExeDir "LidaPrint.exe"
     Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" `
-        -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$self`" & rmdir /q `"$Global:LidaPrintExeDir`"" `
+        -ArgumentList "/c timeout /t 3 /nobreak >nul & del /f /q `"$self`" & rmdir /s /q `"$Global:LidaPrintExeDir`"" `
         -WindowStyle Hidden
 }

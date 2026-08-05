@@ -40,7 +40,7 @@ $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/l
     -Headers @{ "User-Agent" = "LidaPrint-Installer" } -UseBasicParsing
 $exeAsset  = $release.assets | Where-Object name -eq "LidaPrint.exe"
 $sumsAsset = $release.assets | Where-Object name -eq "SHA256SUMS.txt"
-if (-not $exeAsset -or -not $sumsAsset) { Write-Fail "El Release $($release.tag_name) no tiene los assets esperados."; exit 1 }
+if (-not $exeAsset -or -not $sumsAsset) { Write-Fail "El Release $($release.tag_name) no tiene los assets esperados."; throw "Missing release assets: $($release.tag_name)" }
 
 # --- 2. Download + verify ---
 $tempExe = Join-Path $env:TEMP "LidaPrint.exe.download"
@@ -49,7 +49,7 @@ try {
     Invoke-WebRequest -Uri $exeAsset.browser_download_url -OutFile $tempExe -UseBasicParsing
     $sums = (Invoke-WebRequest -Uri $sumsAsset.browser_download_url -UseBasicParsing).Content
     if (-not (Test-Sha256Sum -FilePath $tempExe -SumsContent $sums -FileName "LidaPrint.exe")) {
-        Write-Fail "La verificacion SHA256 fallo. Instalacion abortada."; exit 1
+        Write-Fail "La verificacion SHA256 fallo. Instalacion abortada."; throw "SHA256 verification failed for LidaPrint.exe"
     }
 
     # --- 3. Stop running instances ---
@@ -143,7 +143,7 @@ if ($gsPath) {
                     Write-Fail "  Esperado: $gsExpectedSha256"
                     Write-Fail "  Obtenido: $actual"
                     Write-Fail "Descarga abortada por seguridad. Reinstala manualmente desde ghostscript.com."
-                    exit 1
+                    throw "GS installer SHA256 mismatch"
                 }
                 $gsOk = $true
             } else {
@@ -155,7 +155,7 @@ if ($gsPath) {
                     Write-Fail "  Estado: $($sig.Status)"
                     Write-Fail "  Firmante: $($sig.SignerCertificate.Subject)"
                     Write-Fail "Descarga abortada por seguridad. Reinstala manualmente desde ghostscript.com."
-                    exit 1
+                    throw "GS installer Authenticode signature invalid"
                 }
                 $gsOk = $true
             }
@@ -174,7 +174,7 @@ if ($gsPath) {
 
 if (-not $gsPath) {
     Write-Fail "Ghostscript es el motor de impresion y no pudo instalarse. Revisa tu conexion o instalalo desde ghostscript.com e intenta de nuevo."
-    exit 1
+    throw "Ghostscript installation failed"
 }
 
 # --- 7. config.json (only if not present; upgrade otherwise) ---
@@ -218,6 +218,7 @@ if ($existingTask) {
     }
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         Write-Fail "La tarea existente no pudo eliminarse. Ejecuta como Administrador: Unregister-ScheduledTask -TaskName $taskName -Confirm:0  y reinstala."
+        throw "Scheduled task '$taskName' could not be removed; aborting to avoid registering on top of a broken task"
     }
 }
 
