@@ -9,10 +9,15 @@ Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y 
 ```
 lida-print/
 ├── README.md                ← Este archivo (documentacion completa)
-├── web-install.ps1          ← Instalacion web en un comando (curl / irm)
-├── uninstall.ps1            ← Desinstalacion completa en un comando
-├── Instalador.bat           ← Doble clic para instalar (no requiere admin)
-├── Install.ps1              ← Logica de instalacion (la corren ambos de arriba)
+├── get.ps1                  ← Script de instalacion/actualizacion web (curl / irm)
+├── build/
+│   └── Update-DriverHashes.ps1  ← Recalcula hashes SHA-256 de drivers en drivers.json
+├── drivers/
+│   ├── drivers.json         ← Catalogo de drivers incluidos
+│   ├── epson-tm-u220pd/     ← Driver APD para EPSON TM-U220PD
+│   ├── epson-m188d/         ← Driver APD para EPSON M188D
+│   ├── canon-lbp6030/       ← Instalador para Canon LBP6030/6030B/6030w
+│   └── ...
 ├── LidaPrint.ps1            ← Monitor + servidor HTTP
 ├── Configurator.ps1         ← GUI de configuracion
 ├── LidaPrint.bat            ← Abre el Configurator sin dejar consola abierta
@@ -23,9 +28,9 @@ lida-print/
 └── temp/                    ← PDFs intermedios de la pasada 1 (se crea al ejecutar)
 ```
 
-> **Donde vive la instalacion:** LidaPrint se instala siempre en `%LOCALAPPDATA%\LidaPrint`
-> (ej: `C:\Users\TuUsuario\AppData\Local\LidaPrint`). Esa es la copia que ejecuta el sistema.
-> La carpeta que descargaste es solo el origen: podes moverla o borrarla sin romper nada.
+> **Donde vive la instalacion:** LidaPrint se instala en `%LOCALAPPDATA%\LidaPrint` como
+> un unico ejecutable (`LidaPrint.exe`). El instalador descarga solo ese archivo desde
+> GitHub Releases — no se copia codigo fuente ni scripts.
 
 ---
 
@@ -42,9 +47,10 @@ lida-print/
 9. [Patrones de nombre](#patrones-de-nombre)
 10. [Motor de impresion (Ghostscript)](#motor-de-impresion-ghostscript)
 11. [Logs](#logs)
-12. [Como funciona internamente](#como-funciona-internamente)
-13. [Solucion de problemas](#solucion-de-problemas)
-14. [Desinstalar](#desinstalar)
+12. [Drivers de impresora](#drivers-de-impresora)
+13. [Como funciona internamente](#como-funciona-internamente)
+14. [Solucion de problemas](#solucion-de-problemas)
+15. [Desinstalar](#desinstalar)
 
 ---
 
@@ -73,61 +79,38 @@ Todo sin intervencion del usuario.
 
 ## Instalacion
 
-### Opcion 1: Instalacion web en un comando (recomendado)
+### Instalacion en un comando (recomendado)
 
 Abrir PowerShell (normal, sin admin) y pegar:
 
 ```powershell
-irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/web-install.ps1 | iex
+irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/get.ps1 | iex
 ```
 
 O desde cmd con `curl`:
 
 ```cmd
-curl -L -o "%TEMP%\web-install.ps1" https://raw.githubusercontent.com/LIDALabs/lida-print/main/web-install.ps1 && powershell -ExecutionPolicy Bypass -File "%TEMP%\web-install.ps1"
+curl -L -o "%TEMP%\get.ps1" https://raw.githubusercontent.com/LIDALabs/lida-print/main/get.ps1 && powershell -ExecutionPolicy Bypass -File "%TEMP%\get.ps1"
 ```
 
-Eso descarga LidaPrint a `%LOCALAPPDATA%\LidaPrint`, instala los motores de impresion,
+El instalador descarga **unicamente `LidaPrint.exe`** desde GitHub Releases (no se instala
+codigo fuente), lo copia a `%LOCALAPPDATA%\LidaPrint`, instala Ghostscript si es necesario,
 crea la tarea programada y **abre el Configurator automaticamente** al terminar.
 
-### Opcion 2: Desde la carpeta descargada
-
-1. Descargar/clonar el repositorio.
-2. **Doble clic en `Instalador.bat`.** No requiere Administrador.
-3. Al terminar, el Configurator se abre solo.
-
-Ambas opciones ejecutan `Install.ps1`, que automaticamente:
-- Copia los archivos a la ubicacion estable `%LOCALAPPDATA%\LidaPrint` (conserva tu `config.json` si ya existia).
-- Verifica/instala **Ghostscript**, el motor de impresion (via `winget` o descarga directa; puede pedir UAC).
-- Actualiza `config.json` con las rutas detectadas.
-- Crea la tarea programada **LidaPrint** a nivel usuario (arranca al iniciar sesion, sin admin).
-- **Inicia el monitor de inmediato** (no hace falta cerrar sesion).
-- **Agrega la instalacion al PATH del usuario**: el comando `lidaprint` abre el Configurator.
-- Abre el Configurator.
+**El mismo comando sirve para actualizar:** volver a ejecutarlo descarga la version mas
+reciente de `LidaPrint.exe` y reemplaza la anterior. La configuracion (`config.json`) se
+conserva intacta.
 
 ### Despues de instalar
 
 No hay nada que "correr" a mano: el monitor ya quedo corriendo y se re-lanza solo en cada
 inicio de sesion. Para uso tecnico por consola (abrir una consola **nueva** tras instalar):
 
-```cmd
-lidaprint                                    :: abre el Configurator
-```
-
 ```powershell
 Start-ScheduledTask -TaskName "LidaPrint"    # arrancar el monitor a mano
 Stop-ScheduledTask  -TaskName "LidaPrint"    # detenerlo
 Get-ScheduledTask   -TaskName "LidaPrint"    # ver estado
 ```
-
-> **Migracion desde versiones viejas:** si tenias LidaPrint en `C:\AutoPrintFacturas`, el
-> instalador elimina la tarea vieja y la re-registra apuntando a la nueva ubicacion estable.
-> Si la tarea vieja fue creada como Administrador, ejecuta el instalador elevado una vez para migrarla.
-
-### Opcion 3: Solo abrir el Configurator
-
-1. Doble clic en `LidaPrint.bat` (o `LidaPrint.vbs` para arranque sin ventana de consola).
-2. Configurar y hacer clic en **Guardar**. La tarea programada se crea/repara al guardar si "Auto-iniciar" esta activo.
 
 ---
 
@@ -503,35 +486,69 @@ Niveles: `INFO`, `WARN`, `ERROR`, `OK`.
 
 ---
 
+## Drivers de impresora
+
+LidaPrint incluye drivers preempaquetados para modelos comunes. Se instalan desde la
+pestana **Drivers** del Configurator — no hace falta buscarlos en la web del fabricante.
+
+### Drivers incluidos
+
+| Modelo | Tipo | Formato |
+|--------|------|---------|
+| EPSON TM-U220PD | Matricial / ticket | APD (zip) |
+| EPSON M188D | Termica / ticket | APD (zip) |
+| Canon LBP6030 / 6030B / 6030w | Laser | Instalador exe |
+
+### Instalar un driver desde el Configurator
+
+1. Abrir el Configurator (`LidaPrint.exe`).
+2. Ir a la pestana **Drivers**.
+3. Seleccionar el modelo de la lista.
+4. Hacer clic en **Instalar** y seguir las instrucciones del instalador.
+
+### Agregar un driver nuevo al repositorio
+
+1. Colocar el archivo del driver (zip, exe, etc.) en `drivers/<id>/`.
+2. Agregar la entrada correspondiente en `drivers/drivers.json` con los campos `id`,
+   `name`, `version`, `file`, y `sha256` (dejar `sha256` en blanco por ahora).
+3. Ejecutar `build/Update-DriverHashes.ps1` para calcular y escribir los hashes SHA-256:
+
+```powershell
+.\build\Update-DriverHashes.ps1
+```
+
+4. Commitear `drivers/<id>/`, `drivers/drivers.json` y el hash actualizado.
+
+El Configurator verifica el hash antes de instalar para garantizar la integridad del archivo.
+
+---
+
 ## Como funciona internamente
 
 ### Componentes
 
 | Archivo | Rol |
 |---------|-----|
-| `web-install.ps1` | Descarga el proyecto desde GitHub (raw) y ejecuta `Install.ps1` |
-| `Install.ps1` | Instalador: copia a `%LOCALAPPDATA%\LidaPrint`, Ghostscript, tarea programada, abre el Configurator |
-| `LidaPrint.ps1` | Monitor principal: loop de polling + servidor HTTP |
-| `Configurator.ps1` | GUI de configuracion (Windows Forms, 6 pestanas) |
-| `LidaPrint.bat` | Lanza el Configurator con `-ExecutionPolicy Bypass` |
-| `LidaPrint.vbs` | Ejecuta el `.bat` sin ventana de consola |
+| `get.ps1` | Descarga `LidaPrint.exe` desde GitHub Releases y lo instala en `%LOCALAPPDATA%\LidaPrint` |
+| `LidaPrint.exe` | Ejecutable unico: incluye el monitor, el Configurator y la logica de instalacion/desinstalacion |
 | `config.json` | Configuracion persistente |
-| `logo.png` | Icono de la ventana |
+| `drivers/drivers.json` | Catalogo de drivers incluidos con hashes SHA-256 |
+| `drivers/<id>/` | Archivos de driver por modelo |
 | `logs/` | Registro de operaciones |
 
 ### Flujo general
 
 ```
-web-install.ps1 (curl/irm)  o  Instalador.bat
+get.ps1 (curl/irm)
     |
     v
-Install.ps1  ──>  %LOCALAPPDATA%\LidaPrint\  (ubicacion ESTABLE)
+LidaPrint.exe  ──>  %LOCALAPPDATA%\LidaPrint\  (instalacion ESTABLE)
     |
     v
-Configurator.ps1  ──>  config.json
+LidaPrint.exe --configurator  ──>  config.json
     |
     v (Task Scheduler — al iniciar sesion, nivel usuario, sin admin)
-LidaPrint.ps1
+LidaPrint.exe (monitor)
     |
     +-- [Resolucion de rutas]  Re-resuelve Ghostscript en runtime
     |
@@ -550,6 +567,8 @@ LidaPrint.ps1
             |               usePattern=false → imprime todo PDF
             v
       Ghostscript imprime  →  elimina archivo
+
+LidaPrint.exe -Uninstall  →  elimina tarea, proceso e instalacion
 ```
 
 ### Resolucion de rutas (self-locating)
@@ -613,7 +632,7 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 | Problema | Causa probable | Solucion |
 |----------|----------------|----------|
 | No imprime ninguna factura | Impresora apagada o en pausa | Verificar estado en Panel de control |
-| No imprime tras mover/borrar la carpeta descargada | Instalacion vieja apuntando a ruta muerta (ej: `C:\AutoPrintFacturas`) | Re-ejecutar el instalador (curl o `Instalador.bat`): migra la tarea a `%LOCALAPPDATA%\LidaPrint`. O abrir el Configurator y Guardar: repara la tarea |
+| No imprime tras mover/borrar la carpeta descargada | Instalacion vieja apuntando a ruta muerta (ej: `C:\AutoPrintFacturas`) | Re-ejecutar el instalador (`irm .../get.ps1 \| iex`): migra la tarea a `%LOCALAPPDATA%\LidaPrint`. O abrir el Configurator y Guardar: repara la tarea |
 | **Imprime feo** (el PDF se ve bien en pantalla) | El driver interpreta mal las fuentes del PDF | Pestana **Calidad** -> motor **Ghostscript** + DPI de la impresora (203 en matriciales). Si persiste, activar "Suavizado maximo" |
 | Ghostscript no instalado o movido | winget/descarga fallo, UAC cancelado o ejecutable eliminado | Se auto-resuelve en runtime; si no, instalar desde ghostscript.com y usar **Detectar** en la pestana Calidad |
 | El PDF no se elimina | Archivo bloqueado por otro proceso | LidaPrint reintenta 5 veces; si falla, se reintenta al reiniciar |
@@ -630,15 +649,14 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 
 ## Desinstalar
 
-Un solo comando (PowerShell, sin admin):
+Desde cualquier terminal, sin admin:
 
 ```powershell
-irm https://raw.githubusercontent.com/LIDALabs/lida-print/main/uninstall.ps1 | iex
+LidaPrint.exe -Uninstall
 ```
 
-Elimina **todo**: la tarea programada, los procesos del monitor, la instalacion actual
-(`%LOCALAPPDATA%\LidaPrint`), la instalacion vieja (`C:\AutoPrintFacturas` si existe) y la
-entrada del PATH. Es idempotente: se puede correr aunque algo ya no exista.
+Elimina **todo**: la tarea programada, los procesos del monitor y la instalacion en
+`%LOCALAPPDATA%\LidaPrint`. Es idempotente: se puede correr aunque algo ya no exista.
 
 Para **reinstalar de cero**: correr la desinstalacion y despues el comando de instalacion.
 
