@@ -92,14 +92,18 @@ function Install-PrinterDriver {
     )
     $url = if ($Driver.file -match '^https?://') { $Driver.file } else { "$BaseUrl/$($Driver.file)" }
     $ext = [IO.Path]::GetExtension($Driver.file)
-    $tmp = Join-Path $env:TEMP ("lidadrv_" + $Driver.id + $ext)
+    # %TEMP% may be a dead 8.3 short path (alias generation disabled on the
+    # volume); use the registry-backed long LocalAppData path instead.
+    $tempRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Temp"
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $tmp = Join-Path $tempRoot ("lidadrv_" + $Driver.id + $ext)
     $extractDir = $null
     try {
         Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 600
         $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
         if ($actual -ne $Driver.sha256) { throw "La verificacion SHA256 del driver fallo" }
         if ($Driver.type -eq "zip") {
-            $extractDir = Join-Path $env:TEMP ("lidadrv_" + $Driver.id + "_x")
+            $extractDir = Join-Path $tempRoot ("lidadrv_" + $Driver.id + "_x")
             Expand-Archive -LiteralPath $tmp -DestinationPath $extractDir -Force
             $setup = Join-Path $extractDir $Driver.setupPath
         } else {

@@ -19,6 +19,12 @@ function Write-OK($msg)   { Write-Host "[OK] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "[!] $msg"  -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red }
 
+# Some machines expose %TEMP% as an 8.3 short path (C:\Users\JOSEG~1\...)
+# whose alias does not exist when 8.3 name generation is disabled on the
+# volume. Build the temp dir from the registry-backed long path instead.
+$tempDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Temp"
+New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
 function Test-Sha256Sum {
     param(
         [Parameter(Mandatory)][string]$FilePath,
@@ -43,7 +49,7 @@ $sumsAsset = $release.assets | Where-Object name -eq "SHA256SUMS.txt"
 if (-not $exeAsset -or -not $sumsAsset) { Write-Fail "El Release $($release.tag_name) no tiene los assets esperados."; throw "Missing release assets: $($release.tag_name)" }
 
 # --- 2. Download + verify ---
-$tempExe = Join-Path $env:TEMP "LidaPrint.exe.download"
+$tempExe = Join-Path $tempDir "LidaPrint.exe.download"
 try {
     Write-Step "Descargando LidaPrint.exe $($release.tag_name)..."
     Invoke-WebRequest -Uri $exeAsset.browser_download_url -OutFile $tempExe -UseBasicParsing
@@ -130,7 +136,7 @@ if ($gsPath) {
     if (-not $gsPath) {
         Write-Warn "Descargando instalador de Ghostscript (puede pedir UAC)..."
         try {
-            $tempGs = Join-Path $env:TEMP "gs-installer.exe"
+            $tempGs = Join-Path $tempDir "gs-installer.exe"
             Invoke-WebRequest -Uri $gsUrl -OutFile $tempGs -UseBasicParsing
 
             # Verificar integridad antes de ejecutar
