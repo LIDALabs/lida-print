@@ -1175,27 +1175,38 @@ $btnSave.Add_Click({
     # nunca a una ruta guardada que puede estar muerta. Si la tarea existente
     # apunta a otra ruta (instalacion vieja o carpeta movida), se re-registra.
     $taskName = "LidaPrint"
-    $monitorPath = Join-Path $scriptDir "LidaPrint.ps1"
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     $taskStale = $false
     if ($existingTask) {
         $firstAction = $existingTask.Actions | Select-Object -First 1
-        # Obsoleta si apunta a otra ruta O si no usa conhost --headless
+        # Obsoleta si apunta a otra ruta O si no usa conhost --headless (dev) ni LidaPrint.exe (exe)
         # (lanzadores viejos: Hidden colgaba en Win11, Minimized dejaba ventana cerrable)
-        if ($firstAction.Arguments -notlike "*$monitorPath*" -or $firstAction.Execute -notlike "*conhost*") { $taskStale = $true }
+        if ($Global:LidaPrintExeDir) {
+            $expectedExe = Join-Path $scriptDir "LidaPrint.exe"
+            if ($firstAction.Execute -ne $expectedExe -or $firstAction.Arguments -ne "-Service") { $taskStale = $true }
+        } else {
+            $monitorPath = Join-Path $scriptDir "LidaPrint.ps1"
+            if ($firstAction.Arguments -notlike "*$monitorPath*" -or $firstAction.Execute -notlike "*conhost*") { $taskStale = $true }
+        }
     }
 
     if ($chkAutoStart.Checked -and (-not $existingTask -or $taskStale)) {
         try {
             if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
-            # conhost --headless: consola sin ventana (esquiva Windows Terminal en Win11,
-            # donde Hidden cuelga y ocultar la ventana no funciona). Nada que cerrar.
-            $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$monitorPath`""
+            if ($Global:LidaPrintExeDir) {
+                $taskExecute  = Join-Path $scriptDir "LidaPrint.exe"
+                $taskArgument = "-Service"
+            } else {
+                $monitorPath  = Join-Path $scriptDir "LidaPrint.ps1"
+                $taskExecute  = "$env:SystemRoot\System32\conhost.exe"
+                $taskArgument = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$monitorPath`""
+            }
+            $action = New-ScheduledTaskAction -Execute $taskExecute -Argument $taskArgument
             $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
             $tsSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 0)
             Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $tsSettings -Description "LidaPrint - Impresion automatica de facturas Odoo" | Out-Null
             if ($taskStale) {
-                [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$monitorPath", "Tarea reparada", "OK", "Information")
+                [System.Windows.Forms.MessageBox]::Show("La tarea programada apuntaba a una ruta vieja y fue reparada.`nAhora apunta a:`n$taskExecute", "Tarea reparada", "OK", "Information")
             }
         } catch {
             [System.Windows.Forms.MessageBox]::Show("No se pudo registrar la tarea programada: $_`n`nProba ejecutar el Configurator como Administrador una vez.", "Advertencia", "OK", "Warning")
