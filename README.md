@@ -224,16 +224,34 @@ acepta por ese adaptador.
 | Ancho imprimible (mm) | Ancho fisico maximo del cabezal (la barra que llena el papel) | 64 |
 | DPI horizontal | Densidad de puntos horizontal (`puntos / mm x 25.4`) | 158.75 |
 | DPI vertical | Densidad vertical de la banda de 8 puntos (ajusta la proporcion) | 72 |
-| Densidad | Modo `ESC *`: `0` simple, `1` doble | 1 |
+| Densidad | Modo `ESC *`: `0` simple (8 puntos), `1` doble (24 puntos) | 1 |
+| Interlineado | Avance de papel entre bandas via `ESC 3 n` (unidad 1/144" en TM-U220); ajustado para que las bandas queden contiguas sin franjas blancas ni solape | 16 |
+| Umbral B/N | Corte de luminancia (0-255) para binarizar la imagen antes de mandarla: mas bajo = mas negro | 170 |
+| Suavizado | Antialiasing al rasterizar con Ghostscript (`-dTextAlphaBits=4`): texto mas legible | activado |
 
 **Boton "Imprimir barras de calibracion":** imprime dos barras negras de ancho conocido
 (200 y 400 puntos). Se miden en mm para deducir los valores:
 
-- **Ancho imprimible** = ancho en mm de la barra que llena todo el papel.
-- **DPI horizontal** = `puntos / (mm / 25.4)`. Ejemplo: 200 puntos que miden 32mm ->
-  `200 / (32/25.4)` = **158.75**.
+- **Ancho imprimible** = ancho en mm de la barra que llena todo el papel. En la TM-U220
+  medida: **400 puntos = 64mm** (maximo del cabezal).
+- **DPI horizontal** = `puntos / (mm / 25.4)`. Ejemplo real: 400 puntos que miden 64mm ->
+  `400 / (64/25.4)` = **158.75**. (Este valor MEDIDO manda sobre el 120dpi teorico del
+  spec del modo `ESC *`.)
 - **DPI vertical**: por defecto **72** para 9-agujas; subir/bajar si la altura sale
   estirada o aplastada.
+- **Interlineado (`ESC 3 n`)**: la unidad de avance en la TM-U220 es **1/144 de pulgada**
+  (no 1/216). Para una banda de imagen de 8/24 puntos contigua, el valor correcto es
+  **n = 16**. Se verifica imprimiendo bloques solidos: con n mas alto aparecen franjas
+  blancas entre bandas; con n mas bajo las bandas se montan.
+
+> **Importante — el tamano del texto NO se arregla en LidaPrint.** Si la barra de 400
+> puntos mide 64mm, LidaPrint imprime 1:1 y es fiel. Si la factura sale "chica", la causa
+> esta en el PDF: **wkhtmltopdf aplica *smart-shrinking*** y auto-encoge el contenido para
+> que entre en el ancho de pagina. Si el contenido del reporte es ~3x mas ancho que la
+> pagina, un `font-size: 23pt` termina renderizando a ~3.4pt. La solucion es del lado del
+> **reporte de Odoo**: disenarlo al ancho real del papel (paperformat 72mm, margenes <=2mm)
+> y neutralizar el encogido por CSS. Ver el documento de referencia
+> `REPORTE ODOO 18 CORRECTO` para el formato completo corregido.
 
 > Con ESC/POS, el reporte de Odoo debe estar disenado al tamano del papel (no A4): el
 > paperformat de Odoo, la pestana **Papel** de LidaPrint y el papel fisico deben coincidir
@@ -291,7 +309,15 @@ y dejo de imprimir".
     "invoicePattern":  "^(F|ND|NC)-\\d{8}\\.pdf$",
     "webEnabled":      false,
     "webPort":         8080,
-    "webApiKey":       ""
+    "webApiKey":       "",
+    "escposEnabled":     false,
+    "escposWidthMm":     64,
+    "escposHdpi":        158.75,
+    "escposVdpi":        72,
+    "escposDensity":     1,
+    "escposLineSpacing": 16,
+    "escposThreshold":   170,
+    "escposAntialias":   true
 }
 ```
 
@@ -321,6 +347,18 @@ y dejo de imprimir".
 | `webEnabled` | bool | Habilita el servidor HTTP |
 | `webPort` | int | Puerto HTTP |
 | `webApiKey` | string | Clave de autenticacion. **Obligatoria** si `webEnabled = true` (sin ella el listener no arranca) |
+| `escposEnabled` | bool | Imprime por la via RAW ESC/POS (rasteriza el PDF y manda `ESC *`) en vez de GDI/Ghostscript. Para ticketeras cuyo driver no acepta grafica GDI por el puerto disponible |
+| `escposWidthMm` | decimal | Ancho imprimible del cabezal en mm (barra de calibracion que llena el papel) |
+| `escposHdpi` | decimal | DPI horizontal medido: `puntos / (mm / 25.4)` |
+| `escposVdpi` | decimal | DPI vertical de la banda de 8/24 puntos |
+| `escposDensity` | int | Modo `ESC *`: `0` simple (8 puntos), `1` doble (24 puntos) |
+| `escposLineSpacing` | int | Avance `ESC 3 n` entre bandas. Unidad 1/144" en TM-U220 -> `16` deja bandas contiguas |
+| `escposThreshold` | int | Umbral de binarizacion 0-255 (mas bajo = mas negro) |
+| `escposAntialias` | bool | Suavizado del texto al rasterizar (`-dTextAlphaBits=4`) |
+
+Los valores `escpos*` se calibran por modelo. Cuando instalas el driver desde el
+Configurator, se aplican solos desde el bloque `calibration` de `drivers.json` (ver
+[Drivers de impresora](#drivers-de-impresora)).
 
 ---
 
@@ -613,9 +651,12 @@ pestana **Drivers** del Configurator — no hace falta buscarlos en la web del f
 3. Seleccionar el modelo de la lista.
 4. Hacer clic en **Instalar** y seguir las instrucciones del instalador.
 
-Al terminar la instalacion, LidaPrint deja la impresora **utilizable de inmediato**
-segun el bloque `postInstall` del driver (ver abajo): reasigna el puerto, apaga el
-bidireccional y limpia el estado "sin conexion" sin intervencion.
+Al terminar la instalacion, LidaPrint deja la impresora **utilizable de inmediato**:
+segun el bloque `postInstall` del driver (ver abajo) reasigna el puerto, apaga el
+bidireccional y limpia el estado "sin conexion"; y segun el bloque `calibration`
+escribe en `config.json` el **DPI, ancho imprimible e interlineado ESC/POS medidos
+para ese modelo** — sin pasar por la pestana Calibracion. Instalar el driver en una PC
+nueva deja todo listo para imprimir 1:1.
 
 ### Reparacion automatica post-instalacion (`postInstall`)
 
@@ -640,13 +681,38 @@ La rutina es idempotente y no bloquea: cualquier fallo se registra en el log y l
 instalacion continua. Nota: el asistente del APD todavia pide **una vez** seleccionar
 el modelo y el puerto USB; a partir de ahi, todo lo demas es automatico.
 
+### Calibracion automatica al instalar (`calibration`)
+
+Cada modelo de ticketera tiene un DPI, ancho imprimible e interlineado propios que hay
+que medir una sola vez sobre el hardware (ver seccion **Calibracion (ESC/POS)**). Para
+que no haya que repetir esa medicion en cada PC, esos valores se guardan en el bloque
+opcional `calibration` del driver en `drivers.json`. Al instalar el driver, el
+Configurator los escribe en `config.json` y refleja en la pestana Calibracion.
+
+| Clave | Descripcion | TM-U220 |
+|-------|-------------|---------|
+| `escposEnabled` | Activa la via RAW ESC/POS para este modelo | `true` |
+| `escposWidthMm` | Ancho imprimible del cabezal en mm | `64` |
+| `escposHdpi` | DPI horizontal medido (`puntos / mm x 25.4`) | `158.75` |
+| `escposVdpi` | DPI vertical de la banda | `72` |
+| `escposDensity` | Modo `ESC *`: `0` simple, `1` doble | `1` |
+| `escposLineSpacing` | Avance `ESC 3 n` entre bandas (unidad 1/144") | `16` |
+| `escposThreshold` | Umbral de binarizacion 0-255 | `170` |
+| `escposAntialias` | Suavizado al rasterizar | `true` |
+
+Solo se tocan las claves presentes en el bloque; el resto de `config.json` queda intacto.
+Es idempotente (reinstalar reaplica los mismos valores) y no bloquea: si algo falla se
+registra en el log y la instalacion continua. **Resultado: en toda PC nueva, instalar el
+driver deja la impresion ESC/POS calibrada de una vez, sin ajustes manuales.**
+
 ### Agregar un driver nuevo al repositorio
 
 1. Colocar el archivo del driver (zip, exe, etc.) en `drivers/<id>/`.
 2. Agregar la entrada correspondiente en `drivers/drivers.json` con los campos `id`,
    `name`, `version`, `file`, y `sha256` (dejar `sha256` en blanco por ahora). Si la
    impresora necesita reparacion post-instalacion, agregar el bloque `postInstall`
-   descrito arriba.
+   descrito arriba. Si es una ticketera ESC/POS ya calibrada, agregar el bloque
+   `calibration` con sus valores medidos para que se apliquen solos al instalar.
 3. Ejecutar `build/Update-DriverHashes.ps1` para calcular y escribir los hashes SHA-256:
 
 ```powershell

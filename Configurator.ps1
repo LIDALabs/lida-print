@@ -214,6 +214,67 @@ function Repair-PrinterConnectivity {
     }
 }
 
+function Apply-DriverCalibration {
+    <#
+    .SYNOPSIS
+        Escribe en config.json la calibracion ESC/POS especifica de la impresora
+        recien instalada, declarada por driver en drivers.json ("calibration").
+
+    .DESCRIPTION
+        Objetivo: en cualquier PC nueva, instalar el driver deja el DPI, el ancho
+        imprimible y el interlineado ya ajustados para ESE modelo, sin tener que
+        pasar por la pestana Calibracion a mano. Los valores del bloque
+        "calibration" son los medidos fisicamente sobre el hardware real (ver
+        README, seccion "Calibracion (ESC/POS)").
+
+        Solo toca las claves presentes en el bloque; el resto de config.json queda
+        intacto. Idempotente: reinstalar reaplica los mismos valores. No lanza:
+        cualquier fallo se registra y se continua.
+
+        Devuelve una tabla hash con las claves aplicadas (o $null si el driver no
+        declara calibracion) para que la UI refleje los valores en sus controles.
+
+        Bloque calibration (todas las claves opcionales, mismos nombres que
+        config.json): escposEnabled, escposWidthMm, escposHdpi, escposVdpi,
+        escposDensity, escposLineSpacing, escposThreshold, escposAntialias.
+    #>
+    param(
+        [Parameter(Mandatory)]$Driver,
+        [scriptblock]$Log = { param($m) }
+    )
+    $cal = $Driver.calibration
+    if (-not $cal) { return $null }
+
+    try {
+        # Releer del disco para no pisar cambios de otras pestanas aun sin guardar.
+        $cfg = Load-Config
+        $applied = @{}
+        foreach ($prop in $cal.PSObject.Properties) {
+            $cfg | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+            $applied[$prop.Name] = $prop.Value
+        }
+        Save-Config $cfg
+        $resumen = ($applied.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ", "
+        & $Log "Calibracion aplicada a config.json para '$($Driver.name)': $resumen"
+        return $applied
+    } catch {
+        & $Log "Calibracion: no se pudo aplicar para '$($Driver.name)': $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Set-NudClamped {
+    # Asigna un valor a un NumericUpDown sin lanzar si cae fuera de Min/Max:
+    # lo recorta al rango del control. Usado al reflejar la calibracion del driver.
+    param($Nud, $Value)
+    try {
+        $d = [decimal]$Value
+        if ($d -lt $Nud.Minimum) { $d = $Nud.Minimum }
+        if ($d -gt $Nud.Maximum) { $d = $Nud.Maximum }
+        $Nud.Value = $d
+    } catch { }
+}
+
 # ===================== CALIBRACION ESC/POS =====================
 # Helper de impresion CRUDA (RAW) para las pruebas de calibracion: manda bytes
 # ESC/POS directos a la impresora, sin pasar por el render GDI del driver.
@@ -1464,8 +1525,27 @@ $btnDrvInstall.Add_Click({
                 } catch { }
             }
             Repair-PrinterConnectivity -Driver $drv -Log $repairLog
+
+            # Aplicar la calibracion ESC/POS especifica del modelo (DPI, ancho
+            # imprimible, interlineado) a config.json, para que la impresora quede
+            # lista para imprimir 1:1 sin tocar la pestana Calibracion.
+            $applied = Apply-DriverCalibration -Driver $drv -Log $repairLog
+            if ($applied) {
+                # Reflejar los valores en la pestana Calibracion: quedan visibles y
+                # un "Guardar" posterior no los pisa con los viejos en pantalla.
+                if ($applied.ContainsKey('escposEnabled'))     { $chkEscpos.Checked = [bool]$applied['escposEnabled'] }
+                if ($applied.ContainsKey('escposWidthMm'))     { Set-NudClamped $nudEscWidth   $applied['escposWidthMm'] }
+                if ($applied.ContainsKey('escposHdpi'))        { Set-NudClamped $nudEscHdpi    $applied['escposHdpi'] }
+                if ($applied.ContainsKey('escposVdpi'))        { Set-NudClamped $nudEscVdpi    $applied['escposVdpi'] }
+                if ($applied.ContainsKey('escposDensity'))     { Set-NudClamped $nudEscDensity $applied['escposDensity'] }
+                if ($applied.ContainsKey('escposLineSpacing')) { Set-NudClamped $nudEscLineSp  $applied['escposLineSpacing'] }
+                if ($applied.ContainsKey('escposThreshold'))   { Set-NudClamped $nudEscThr     $applied['escposThreshold'] }
+                if ($applied.ContainsKey('escposAntialias'))   { $chkEscAA.Checked = [bool]$applied['escposAntialias'] }
+            }
+
+            $calMsg = if ($applied) { "`n`nCalibracion ESC/POS aplicada automaticamente para este modelo." } else { "" }
             $lblDrvStatus.Text = "Driver instalado y configurado correctamente."
-            [System.Windows.Forms.MessageBox]::Show("$($drv.name) instalado correctamente.", "LidaPrint") | Out-Null
+            [System.Windows.Forms.MessageBox]::Show("$($drv.name) instalado correctamente.$calMsg", "LidaPrint") | Out-Null
         } else {
             $lblDrvStatus.Text = "El instalador devolvio el codigo $code."
             [System.Windows.Forms.MessageBox]::Show("El instalador de $($drv.name) devolvio el codigo $code.", "LidaPrint") | Out-Null

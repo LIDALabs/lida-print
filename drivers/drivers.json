@@ -16,6 +16,16 @@
         "usbPortMatch": "EPSONTM|TM-U220",
         "disableBidi": true,
         "clearOffline": true
+      },
+      "calibration": {
+        "escposEnabled": true,
+        "escposWidthMm": 64,
+        "escposHdpi": 158.75,
+        "escposVdpi": 72,
+        "escposDensity": 1,
+        "escposLineSpacing": 16,
+        "escposThreshold": 170,
+        "escposAntialias": true
       }
     },
     {

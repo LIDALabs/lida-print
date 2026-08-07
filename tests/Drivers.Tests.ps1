@@ -46,4 +46,33 @@ Describe "drivers.json manifest" {
         $epson.postInstall.rebindToUsb | Should -BeTrue
         $epson.postInstall.disableBidi | Should -BeTrue
     }
+    It "calibration (si existe) usa claves escpos conocidas y tipos validos" {
+        $known = @('escposEnabled','escposWidthMm','escposHdpi','escposVdpi',
+                   'escposDensity','escposLineSpacing','escposThreshold','escposAntialias')
+        foreach ($d in $script:manifest.drivers) {
+            if ($d.PSObject.Properties.Name -contains 'calibration' -and $d.calibration) {
+                foreach ($prop in $d.calibration.PSObject.Properties) {
+                    $prop.Name | Should -BeIn $known
+                }
+                foreach ($flag in 'escposEnabled','escposAntialias') {
+                    if ($d.calibration.PSObject.Properties.Name -contains $flag) {
+                        $d.calibration.$flag | Should -BeOfType [bool]
+                    }
+                }
+                foreach ($num in 'escposWidthMm','escposHdpi','escposVdpi','escposDensity','escposLineSpacing','escposThreshold') {
+                    if ($d.calibration.PSObject.Properties.Name -contains $num) {
+                        $d.calibration.$num | Should -BeGreaterThan 0
+                    }
+                }
+            }
+        }
+    }
+    It "el driver EPSON TM-U220 trae la calibracion ESC/POS medida" {
+        $epson = $script:manifest.drivers | Where-Object { $_.id -eq 'epson-tm-u220pd' }
+        $epson.calibration | Should -Not -BeNullOrEmpty
+        $epson.calibration.escposEnabled | Should -BeTrue
+        $epson.calibration.escposWidthMm | Should -Be 64
+        $epson.calibration.escposHdpi | Should -Be 158.75
+        $epson.calibration.escposLineSpacing | Should -Be 16
+    }
 }
