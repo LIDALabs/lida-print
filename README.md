@@ -406,11 +406,87 @@ print(requests.get(f"{BASE}/print/status", headers=HEADERS).json())
 requests.post(f"{BASE}/clear", headers=HEADERS)
 ```
 
-### Firewall (acceso desde otra maquina)
+**IMPORTANTE — la URL se resuelve donde corre Odoo, no donde corre LidaPrint.**
+La peticion HTTP la hace el **servidor** de Odoo (Python), no el navegador del
+usuario. `http://localhost:PUERTO` solo funciona si Odoo y LidaPrint corren en
+la **misma** maquina. Si Odoo corre en Linux y LidaPrint en un Windows aparte
+(fisico o VM), la URL configurada en Odoo debe ser la IP de esa maquina Windows
+vista desde el servidor de Odoo, por ejemplo `http://192.168.122.32:8081`.
+La URL que muestra el Configurator (`http://localhost:...`) es valida solo
+dentro del propio Windows.
+
+### Integracion con Odoo (modulo l10n_ve_lidoo_integration_api)
+
+El modulo de la localizacion venezolana trae la integracion lista en
+**Ajustes > API de integracion > LidaPrint**:
+
+| Campo | Valor |
+|-------|-------|
+| Imprimir Forma Libre con LidaPrint | Interruptor. Encendido, el boton **Forma Libre** envia a LidaPrint dos PDF por documento: el original y la copia **SIN DERECHO A CREDITO FISCAL**. Apagado, descarga el PDF en el navegador como siempre |
+| URL de LidaPrint | IP del Windows donde corre LidaPrint (ver advertencia de `localhost` arriba). Ej: `http://192.168.122.32:8081` |
+| API Key de LidaPrint | La misma `webApiKey` del `config.json` (pestana Monitoreo del Configurator) |
+| Probar conexion | Hace `GET /print/status` y notifica si LidaPrint responde |
+
+Reglas de comportamiento del modulo:
+
+- Solo aplica a facturas, notas de credito y notas de debito de cliente
+  publicadas con numero de control.
+- Con el interruptor encendido y sin conexion, la impresion se **bloquea** con
+  un error explicito (no imprime a medias en silencio).
+- En el `config.json` de LidaPrint dejar **`copies: 1`**: Odoo ya envia
+  original y copia como documentos separados; con `copies: 2` saldria 2x2.
+- Los PDF viajan por `POST /print/file` (subida directa), asi que **no** hace
+  falta carpeta compartida ni que el navegador descargue nada.
+
+### Acceso desde otra maquina (Odoo en Linux, LidaPrint en VM/PC Windows)
+
+Checklist completo para que la API responda desde fuera del Windows. Los tres
+pasos de PowerShell van **como Administrador** y usan el puerto configurado en
+la pestana Monitoreo (ejemplos con 8081):
 
 ```powershell
-New-NetFirewallRule -DisplayName "LidaPrint HTTP" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+# 1. Perfil de red Privado (el perfil Publico descarta todo el trafico entrante)
+Set-NetConnectionProfile -NetworkCategory Private
+
+# 2. Regla de firewall para el puerto de LidaPrint
+New-NetFirewallRule -DisplayName "LidaPrint HTTP" -Direction Inbound -LocalPort 8081 -Protocol TCP -Action Allow
+
+# 3. Reserva urlacl: sin esto el listener NO ARRANCA cuando LidaPrint corre sin admin
+netsh http add urlacl url=http://+:8081/ user=$env:USERNAME
 ```
+
+Despues de los tres pasos, **reiniciar LidaPrint** (Guardar en el Configurator
+y relanzar el monitor): el listener solo relee la configuracion al arrancar.
+
+Verificacion, en orden — cada paso descarta una capa:
+
+```powershell
+# Dentro del Windows: el listener esta vivo?
+netstat -ano | findstr :8081        # debe mostrar 0.0.0.0:8081 LISTENING
+curl.exe -m 3 http://localhost:8081/print/status   # debe devolver {"status":"ok",...}
+```
+
+```bash
+# Desde la maquina de Odoo (Linux):
+curl -m 5 http://IP_DEL_WINDOWS:8081/print/status  # debe devolver {"status":"ok",...}
+```
+
+Como leer los fallos del curl remoto:
+
+- **Timeout** -> el firewall de Windows esta descartando los paquetes
+  (perfil de red Publico o falta la regla del paso 2).
+- **Connection refused** -> el puerto esta abierto pero no hay listener
+  (LidaPrint apagado, o el listener no arranco por falta de urlacl del paso 3;
+  el log de LidaPrint registra el motivo).
+
+En una VM libvirt/KVM, la IP del guest se obtiene desde el host con:
+
+```bash
+virsh -c qemu:///system net-dhcp-leases default
+```
+
+El ping al Windows puede fallar aunque todo este bien (ICMP viene bloqueado
+por defecto); probar siempre con `curl` al puerto, no con ping.
 
 ---
 
@@ -506,11 +582,40 @@ pestana **Drivers** del Configurator — no hace falta buscarlos en la web del f
 3. Seleccionar el modelo de la lista.
 4. Hacer clic en **Instalar** y seguir las instrucciones del instalador.
 
+Al terminar la instalacion, LidaPrint deja la impresora **utilizable de inmediato**
+segun el bloque `postInstall` del driver (ver abajo): reasigna el puerto, apaga el
+bidireccional y limpia el estado "sin conexion" sin intervencion.
+
+### Reparacion automatica post-instalacion (`postInstall`)
+
+Algunas ticketeras EPSON (driver APD) conectadas por un **adaptador USB-a-paralelo**
+(p. ej. CH340) quedan, tras el asistente del driver, atadas al puerto propio de EPSON
+(`ESDPRTxxx`). Ese puerto usa deteccion USB **nativa EPSON** y nunca encuentra al
+adaptador generico: el trabajo entra al spooler pero **no sale papel**, y el polling
+bidireccional que el adaptador no responde deja la impresora en estado **"Sin conexion"**.
+
+El Configurator corrige esto automaticamente al instalar, segun el bloque opcional
+`postInstall` de cada driver en `drivers.json`:
+
+| Campo | Efecto |
+|-------|--------|
+| `printerNameMatch` | Regex del nombre de la impresora instalada a reparar. |
+| `rebindToUsb` | Reasigna la impresora del puerto `ESDPRTxxx` al puerto `USBxxx` del adaptador. |
+| `usbPortMatch` | Regex de la descripcion del puerto USB fisico a elegir (su ID 1284). |
+| `disableBidi` | Apaga el soporte bidireccional (`EnableBIDI=false`) que causa el "Sin conexion". |
+| `clearOffline` | Quita el flag "usar impresora sin conexion". |
+
+La rutina es idempotente y no bloquea: cualquier fallo se registra en el log y la
+instalacion continua. Nota: el asistente del APD todavia pide **una vez** seleccionar
+el modelo y el puerto USB; a partir de ahi, todo lo demas es automatico.
+
 ### Agregar un driver nuevo al repositorio
 
 1. Colocar el archivo del driver (zip, exe, etc.) en `drivers/<id>/`.
 2. Agregar la entrada correspondiente en `drivers/drivers.json` con los campos `id`,
-   `name`, `version`, `file`, y `sha256` (dejar `sha256` en blanco por ahora).
+   `name`, `version`, `file`, y `sha256` (dejar `sha256` en blanco por ahora). Si la
+   impresora necesita reparacion post-instalacion, agregar el bloque `postInstall`
+   descrito arriba.
 3. Ejecutar `build/Update-DriverHashes.ps1` para calcular y escribir los hashes SHA-256:
 
 ```powershell
@@ -638,8 +743,12 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 | El PDF no se elimina | Archivo bloqueado por otro proceso | LidaPrint reintenta 5 veces; si falla, se reintenta al reiniciar |
 | No detecta facturas (modo local) | Patron incorrecto o API activada | Revisar el regex o desactivar la API |
 | API no responde | Puerto en uso o firewall | `netstat -an \| findstr 8080` y abrir el puerto |
+| Odoo dice "LidaPrint no respondio" con **timeout** | Firewall de Windows descartando trafico (perfil de red Publico o falta la regla), o la URL en Odoo apunta a `localhost` en vez de a la IP del Windows | Seguir el checklist de **Acceso desde otra maquina**; en Odoo usar `http://IP_DEL_WINDOWS:PUERTO` |
+| Odoo no conecta pero `curl.exe localhost` funciona dentro del Windows | El listener esta vivo pero el firewall bloquea el acceso externo | Perfil de red Privado + regla de firewall del puerto (pasos 1 y 2 del checklist) |
+| `netstat` no muestra el puerto y `curl.exe localhost` falla dentro del Windows | El listener nunca arranco: falta la reserva urlacl o no se reinicio tras Guardar | Paso 3 del checklist (`netsh http add urlacl ...`) y reiniciar LidaPrint |
 | 401 Unauthorized | API Key incorrecta | Verificar el header `X-Api-Key` |
-| El listener no arranca | Falta reserva urlacl (tarea de usuario, sin admin) | Una vez, como Administrador: `netsh http add urlacl url=http://+:8080/ user=%USERNAME%` |
+| El listener no arranca | Falta reserva urlacl (tarea de usuario, sin admin) | Una vez, como Administrador: `netsh http add urlacl url=http://+:8080/ user=%USERNAME%` (ajustar el puerto al configurado) y **reiniciar LidaPrint** |
+| Ticketera EPSON: el trabajo entra a la cola pero **no sale papel** e imprime como "Sin conexion" | Conectada por adaptador USB-a-paralelo (CH340): quedo en el puerto `ESDPRTxxx` de EPSON (que no ve al adaptador) y con bidireccional activo | Se corrige solo al instalar el driver desde el Configurator (bloque `postInstall`). Manual: reasignar la impresora al puerto `USBxxx` del adaptador, apagar el bidireccional (Propiedades → Puertos → desmarcar "Habilitar compatibilidad bidireccional") y reiniciar el spooler |
 | La tarea corre pero el log esta vacio (ni la linea de arranque) | Windows 11: `-WindowStyle Hidden` cuelga la creacion de la consola y el script nunca ejecuta | Reinstalar, o abrir el Configurator y **Guardar**: migra la tarea a `conhost --headless` (sin ventana) |
 | Aparece una ventana de consola al imprimir y cerrarla mata el monitor | Tarea vieja lanzada con `-WindowStyle Minimized` (la ventana existia, solo minimizada) | Reinstalar o **Guardar**: la tarea migra a `conhost --headless`, el monitor corre sin ventana alguna |
 | Monitor se cierra al iniciar | Error en `config.json` | Revisar el log: toda salida temprana escribe su motivo (impresora, motores, carpeta) |
