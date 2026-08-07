@@ -324,78 +324,115 @@ function Read-PbmToken {
 }
 
 function Invoke-PrintEscPos {
-    # Via ESC/POS raster: rasteriza el PDF a un bitmap monocromo del ancho
-    # imprimible y lo manda como comandos de imagen (ESC *) en bytes crudos.
-    # Para ticketeras 9-agujas / termicas cuyo driver no acepta impresion GDI
-    # por el puerto disponible (p. ej. EPSON TM-U220 por adaptador CH340).
+    # Via ESC/POS raster: rasteriza el PDF a un bitmap del ancho imprimible y lo
+    # manda como comandos de imagen (ESC *) en bytes crudos. Para ticketeras
+    # 9-agujas / termicas cuyo driver no acepta impresion GDI por el puerto
+    # disponible (p. ej. EPSON TM-U220 por adaptador USB-a-paralelo CH340).
     #
-    # Densidades calibradas por impresora (pestana Calibracion del Configurator):
-    #   escposWidthMm : ancho imprimible real (barra de 400 puntos medida).
-    #   escposHdpi    : puntos por pulgada horizontal (200 puntos / mm medidos).
-    #   escposVdpi    : densidad vertical de la banda de 8 puntos.
+    # Estrategia (maximiza tamano y nitidez en papel angosto):
+    #   1. Recorta al CONTENIDO real del PDF (device bbox) -> descarta margenes
+    #      y el blanco, para que la factura llene el papel.
+    #   2. Escala ese contenido para llenar el ancho imprimible completo.
+    #   3. Renderiza en gris con antialiasing y umbraliza -> trazos mas firmes,
+    #      texto chico mas legible en impacto.
+    #   4. Codifica en bandas ESC * de 8 puntos con el interlineado calibrado.
+    #
+    # Valores calibrados por impresora (pestana Calibracion del Configurator):
+    #   escposWidthMm     : ancho imprimible real (la barra que llena el papel).
+    #   escposHdpi        : densidad horizontal (puntos / mm * 25.4).
+    #   escposVdpi        : densidad vertical de la banda de 8 puntos.
+    #   escposLineSpacing : ESC 3 n para que las bandas queden JUSTO pegadas
+    #                       (mide un bloque solido; corrige la raya blanca).
+    #   escposThreshold   : umbral de negro (0-255); mas alto = trazo mas grueso.
     param([string]$filePath)
     $fileName = Split-Path $filePath -Leaf
-    $widthMm = if ($config.escposWidthMm) { [double]$config.escposWidthMm } else { 64 }
-    $hdpi    = if ($config.escposHdpi)    { [double]$config.escposHdpi }    else { 158.75 }
-    $vdpi    = if ($config.escposVdpi)    { [double]$config.escposVdpi }    else { 72 }
-    $m       = if ($null -ne $config.escposDensity) { [int]$config.escposDensity } else { 1 }
+    $widthMm  = if ($config.escposWidthMm) { [double]$config.escposWidthMm } else { 64 }
+    $hdpi     = if ($config.escposHdpi)    { [double]$config.escposHdpi }    else { 158.75 }
+    $vdpi     = if ($config.escposVdpi)    { [double]$config.escposVdpi }    else { 72 }
+    $m        = if ($null -ne $config.escposDensity) { [int]$config.escposDensity } else { 1 }
+    $lineSpacing = if ($config.escposLineSpacing) { [int]$config.escposLineSpacing } else { 16 }
+    $threshold   = if ($null -ne $config.escposThreshold) { [int]$config.escposThreshold } else { 170 }
+    $antialias   = if ($null -ne $config.escposAntialias) { [bool]$config.escposAntialias } else { $true }
 
     try {
-        # 1) Sonda de aspecto de pagina (render cuadrado a baja resolucion).
-        $probe = Join-Path $script:tempDir ("escpos_probe_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
-        $probeArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -r24 `"-sOutputFile=$probe`" -f `"$filePath`""
-        Invoke-ProcessCapture $gsResolved $probeArgs | Out-Null
-        if (-not (Test-Path $probe)) { return @{ Success = $false; Message = "ESC/POS: no se pudo leer el PDF: $fileName" } }
-        $pb = [System.IO.File]::ReadAllBytes($probe)
-        $pi = 2
-        $pw = [int](Read-PbmToken $pb ([ref]$pi)); $ph = [int](Read-PbmToken $pb ([ref]$pi))
-        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-        $aspect = $ph / $pw
+        if (-not ("System.Drawing.Bitmap" -as [type])) { Add-Type -AssemblyName System.Drawing }
 
-        # 2) Render final: ancho fijo (imprimible), alto por aspecto, densidades
-        #    H/V separadas para que la proporcion en papel sea correcta.
-        $wPts = [math]::Round($widthMm * 2.83465, 2)
-        $hPts = [math]::Round($wPts * $aspect, 2)
-        $pbm = Join-Path $script:tempDir ("escpos_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
-        Remove-Item -LiteralPath $pbm -Force -ErrorAction SilentlyContinue
-        $rArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -dFIXEDMEDIA -dPDFFitPage " +
-                 "-dDEVICEWIDTHPOINTS=$wPts -dDEVICEHEIGHTPOINTS=$hPts -r$hdpi" + "x" + "$vdpi " +
-                 "`"-sOutputFile=$pbm`" -f `"$filePath`""
+        # 1) bbox del contenido (puntos). Descarta margenes/blanco del PDF.
+        #    El device bbox escribe a STDERR: redirigir a archivo (capturar con
+        #    2>&1 lo envuelve como ErrorRecord y no matchea el texto).
+        $bboxTxt = Join-Path $script:tempDir ("escpos_bbox_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".txt")
+        Remove-Item -LiteralPath $bboxTxt -Force -ErrorAction SilentlyContinue
+        Start-Process $gsResolved -ArgumentList "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=bbox -dLastPage=1 -f `"$filePath`"" -Wait -NoNewWindow -RedirectStandardError $bboxTxt
+        $bw = 0; $bh = 0; $llx = 0; $lly = 0
+        if (Test-Path $bboxTxt) {
+            $bline = Get-Content $bboxTxt | Select-String "HiResBoundingBox" | Select-Object -First 1
+            if ($bline) {
+                $nums = [regex]::Matches($bline.ToString(), "[-0-9.]+") | ForEach-Object { [double]$_.Value }
+                if ($nums.Count -ge 4) { $llx = $nums[0]; $lly = $nums[1]; $bw = $nums[2] - $llx; $bh = $nums[3] - $lly }
+            }
+            Remove-Item -LiteralPath $bboxTxt -Force -ErrorAction SilentlyContinue
+        }
+
+        # 2) Geometria destino: llenar el ancho imprimible, alto por aspecto fisico.
+        $widthDots = [int][math]::Round($widthMm / 25.4 * $hdpi)
+        if ($bw -le 1 -or $bh -le 1) {
+            # PDF sin bbox util (raro): usar pagina completa como respaldo.
+            $probe = Join-Path $script:tempDir ("escpos_probe_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
+            Invoke-ProcessCapture $gsResolved "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -r24 `"-sOutputFile=$probe`" -f `"$filePath`"" | Out-Null
+            $pb = [System.IO.File]::ReadAllBytes($probe); $pi = 2
+            $pw = [int](Read-PbmToken $pb ([ref]$pi)); $ph = [int](Read-PbmToken $pb ([ref]$pi))
+            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+            $bw = $pw * 3.0; $bh = $ph * 3.0; $llx = 0; $lly = 0
+        }
+        $rows = [int][math]::Round(($widthDots / $hdpi) * ($bh / $bw) * $vdpi)
+        if ($rows -lt 1) { $rows = 1 }
+        $rHdpi = $widthDots * 72.0 / $bw
+        $rVdpi = $rows * 72.0 / $bh
+        $inst = "<</Install{ $([math]::Round(-1 * $llx, 3)) $([math]::Round(-1 * $lly, 3)) translate }>> setpagedevice"
+
+        # 3) Render gris (antialias) o mono, recortado+escalado al destino.
+        $png = Join-Path $script:tempDir ("escpos_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".png")
+        Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue
+        $aa = if ($antialias) { "-dTextAlphaBits=4 -dGraphicsAlphaBits=4" } else { "" }
+        $rArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pnggray $aa -g${widthDots}x${rows} " +
+                 "-r$rHdpi" + "x" + "$rVdpi -dFIXEDMEDIA `"-sOutputFile=$png`" -c `"$inst`" -f `"$filePath`""
         $rc = Invoke-ProcessCapture $gsResolved $rArgs
-        if (-not (Test-Path $pbm)) { return @{ Success = $false; Message = "ESC/POS: fallo el rasterizado (gs $rc): $fileName" } }
+        if (-not (Test-Path $png)) { return @{ Success = $false; Message = "ESC/POS: fallo el rasterizado (gs $rc): $fileName" } }
 
-        # 3) Parsear PBM (P4 binario) y codificar a ESC * en bandas de 8 puntos.
-        $raw = [System.IO.File]::ReadAllBytes($pbm)
-        $idx = 2
-        $w = [int](Read-PbmToken $raw ([ref]$idx)); $h = [int](Read-PbmToken $raw ([ref]$idx)); $idx++
-        $rowBytes = [int][math]::Ceiling($w / 8.0); $pixStart = $idx
-        $lineSpacing = [int][math]::Round(8 * 216 / $vdpi)
+        # 4) Leer los grises via LockBits (rapido) y umbralizar.
+        $bmp = New-Object System.Drawing.Bitmap($png)
+        $w = $bmp.Width; $h = $bmp.Height
+        $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
+        $bd = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $stride = $bd.Stride
+        $buf = New-Object byte[] ($stride * $h)
+        [System.Runtime.InteropServices.Marshal]::Copy($bd.Scan0, $buf, 0, $buf.Length)
+        $bmp.UnlockBits($bd); $bmp.Dispose()
+        Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue
 
+        # 5) Codificar en bandas ESC * de 8 puntos. Negro si gris < umbral.
         $out = New-Object System.Collections.Generic.List[byte]
         $ESC = 0x1B; $LF = 0x0A
-        $out.Add($ESC); $out.Add(0x40)                            # ESC @ init
-        $out.Add($ESC); $out.Add(0x33); $out.Add([byte]$lineSpacing)  # ESC 3 n interlineado
+        $out.Add($ESC); $out.Add(0x40)                               # ESC @ init
+        $out.Add($ESC); $out.Add(0x33); $out.Add([byte]$lineSpacing) # ESC 3 n calibrado
         $nL = $w -band 0xFF; $nH = ($w -shr 8) -band 0xFF
         $bands = [int][math]::Ceiling($h / 8.0)
         for ($band = 0; $band -lt $bands; $band++) {
             $out.Add($ESC); $out.Add(0x2A); $out.Add([byte]$m); $out.Add([byte]$nL); $out.Add([byte]$nH)
             for ($x = 0; $x -lt $w; $x++) {
                 $bv = 0
+                $xoff = $x * 3
                 for ($k = 0; $k -lt 8; $k++) {
                     $r = $band * 8 + $k
-                    if ($r -lt $h) {
-                        $bi = $pixStart + $r * $rowBytes + [int][math]::Floor($x / 8)
-                        if ($bi -lt $raw.Length -and ((($raw[$bi] -shr (7 - ($x % 8))) -band 1) -eq 1)) {
-                            $bv = $bv -bor (1 -shl (7 - $k))
-                        }
+                    if ($r -lt $h -and $buf[$r * $stride + $xoff] -lt $threshold) {
+                        $bv = $bv -bor (1 -shl (7 - $k))
                     }
                 }
                 $out.Add([byte]$bv)
             }
             $out.Add($LF)
         }
-        1..6 | ForEach-Object { $out.Add($LF) }                   # avanzar para cortar
-        Remove-Item -LiteralPath $pbm -Force -ErrorAction SilentlyContinue
+        1..6 | ForEach-Object { $out.Add($LF) }                      # avanzar para cortar
 
         $res = [LidaRaw]::Send($config.printer, $out.ToArray())
         if ($res -eq "OK") {

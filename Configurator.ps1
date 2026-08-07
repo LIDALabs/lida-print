@@ -28,6 +28,7 @@ function Load-Config {
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
         webEnabled = $false; webPort = 8080; webApiKey = ""
         escposEnabled = $false; escposWidthMm = 64; escposHdpi = 158.75; escposVdpi = 72; escposDensity = 1
+        escposLineSpacing = 16; escposThreshold = 170; escposAntialias = $true
     }
     $cfg = $null
     if (Test-Path $configPath) {
@@ -1018,7 +1019,7 @@ Set-DarkTheme $tC
 $grpEsc = New-Object System.Windows.Forms.GroupBox
 $grpEsc.Text = "Impresion ESC/POS (ticketeras por adaptador USB-paralelo)"
 $grpEsc.Location = New-Object System.Drawing.Point(10, 10)
-$grpEsc.Size = New-Object System.Drawing.Size(590, 130)
+$grpEsc.Size = New-Object System.Drawing.Size(590, 140)
 Set-DarkTheme $grpEsc
 $tC.Controls.Add($grpEsc)
 
@@ -1097,10 +1098,49 @@ $nudEscDensity.Value = [decimal]$config.escposDensity
 Set-DarkTheme $nudEscDensity
 $grpEsc.Controls.Add($nudEscDensity)
 
+# Interlineado (ESC 3 n), umbral de negro y antialiasing
+$lblEscLS = New-Object System.Windows.Forms.Label
+$lblEscLS.Text = "Interlineado (bandas):"
+$lblEscLS.Location = New-Object System.Drawing.Point(255, 88)
+$lblEscLS.Size = New-Object System.Drawing.Size(130, 20)
+Set-DarkTheme $lblEscLS
+$grpEsc.Controls.Add($lblEscLS)
+
+$nudEscLineSp = New-Object System.Windows.Forms.NumericUpDown
+$nudEscLineSp.Location = New-Object System.Drawing.Point(385, 86)
+$nudEscLineSp.Size = New-Object System.Drawing.Size(55, 20)
+$nudEscLineSp.Minimum = 1; $nudEscLineSp.Maximum = 64
+$nudEscLineSp.Value = [decimal]$config.escposLineSpacing
+Set-DarkTheme $nudEscLineSp
+$grpEsc.Controls.Add($nudEscLineSp)
+
+$lblEscThr = New-Object System.Windows.Forms.Label
+$lblEscThr.Text = "Umbral negro:"
+$lblEscThr.Location = New-Object System.Drawing.Point(455, 88)
+$lblEscThr.Size = New-Object System.Drawing.Size(85, 20)
+Set-DarkTheme $lblEscThr
+$grpEsc.Controls.Add($lblEscThr)
+
+$nudEscThr = New-Object System.Windows.Forms.NumericUpDown
+$nudEscThr.Location = New-Object System.Drawing.Point(520, 86)
+$nudEscThr.Size = New-Object System.Drawing.Size(55, 20)
+$nudEscThr.Minimum = 1; $nudEscThr.Maximum = 254
+$nudEscThr.Value = [decimal]$config.escposThreshold
+Set-DarkTheme $nudEscThr
+$grpEsc.Controls.Add($nudEscThr)
+
+$chkEscAA = New-Object System.Windows.Forms.CheckBox
+$chkEscAA.Text = "Antialiasing (trazo mas firme para texto chico)"
+$chkEscAA.Location = New-Object System.Drawing.Point(10, 112)
+$chkEscAA.Size = New-Object System.Drawing.Size(560, 20)
+$chkEscAA.Checked = [bool]$config.escposAntialias
+Set-DarkTheme $chkEscAA
+$grpEsc.Controls.Add($chkEscAA)
+
 # Boton: imprimir barras de calibracion
 $btnCalibBars = New-Object System.Windows.Forms.Button
 $btnCalibBars.Text = "Imprimir barras de calibracion"
-$btnCalibBars.Location = New-Object System.Drawing.Point(10, 150)
+$btnCalibBars.Location = New-Object System.Drawing.Point(10, 160)
 $btnCalibBars.Size = New-Object System.Drawing.Size(230, 28)
 $btnCalibBars.Add_Click({
     if (-not $cmbPrinter.SelectedItem) {
@@ -1117,8 +1157,8 @@ Set-DarkTheme $btnCalibBars
 $tC.Controls.Add($btnCalibBars)
 
 $lblCalibHint = New-Object System.Windows.Forms.Label
-$lblCalibHint.Text = "Para ticketeras 9-agujas/termicas conectadas por un adaptador USB-a-paralelo (p. ej. CH340), el driver no acepta impresion grafica GDI y Ghostscript falla. Con ESC/POS activo, LidaPrint rasteriza el PDF y lo envia como imagen en bytes crudos.`n`nCalibracion: imprima las barras, mida cada una en mm y cargue el Ancho imprimible (la barra que llena el papel) y el DPI horizontal (puntos / mm x 25.4). El DPI vertical ajusta la proporcion; por defecto 72 para 9-agujas."
-$lblCalibHint.Location = New-Object System.Drawing.Point(12, 190)
+$lblCalibHint.Text = "Para ticketeras 9-agujas/termicas por adaptador USB-a-paralelo (CH340): el driver no acepta impresion GDI. Con ESC/POS activo, LidaPrint recorta el PDF al contenido, lo escala para llenar el ancho y lo envia como imagen en bytes crudos.`n`nCalibracion: (1) imprima las barras y mida cada una: Ancho imprimible = la barra que llena el papel; DPI horizontal = puntos / mm x 25.4. (2) Interlineado: imprima bloques solidos y elija el n mas grande sin rayas blancas (por defecto 16 para 9-agujas). (3) Umbral: mas alto = trazo mas grueso. El ancho imprimible del cabezal (p. ej. 64mm) es el limite fisico: el reporte debe tener pocos caracteres por linea y fuentes grandes para que se lea."
+$lblCalibHint.Location = New-Object System.Drawing.Point(12, 200)
 $lblCalibHint.Size = New-Object System.Drawing.Size(585, 130)
 Set-DarkTheme $lblCalibHint
 $tC.Controls.Add($lblCalibHint)
@@ -1590,11 +1630,14 @@ $btnSave.Add_Click({
         webEnabled     = $chkWeb.Checked
         webPort        = [int]$nudPort.Value
         webApiKey      = $txtApiKey.Text
-        escposEnabled  = $chkEscpos.Checked
-        escposWidthMm  = [decimal]$nudEscWidth.Value
-        escposHdpi     = [decimal]$nudEscHdpi.Value
-        escposVdpi     = [decimal]$nudEscVdpi.Value
-        escposDensity  = [int]$nudEscDensity.Value
+        escposEnabled     = $chkEscpos.Checked
+        escposWidthMm     = [decimal]$nudEscWidth.Value
+        escposHdpi        = [decimal]$nudEscHdpi.Value
+        escposVdpi        = [decimal]$nudEscVdpi.Value
+        escposDensity     = [int]$nudEscDensity.Value
+        escposLineSpacing = [int]$nudEscLineSp.Value
+        escposThreshold   = [int]$nudEscThr.Value
+        escposAntialias   = $chkEscAA.Checked
     }
 
     Save-Config $newConfig
