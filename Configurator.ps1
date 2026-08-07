@@ -27,6 +27,7 @@ function Load-Config {
         autoStart = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
         webEnabled = $false; webPort = 8080; webApiKey = ""
+        escposEnabled = $false; escposWidthMm = 64; escposHdpi = 158.75; escposVdpi = 72; escposDensity = 1
     }
     $cfg = $null
     if (Test-Path $configPath) {
@@ -210,6 +211,58 @@ function Repair-PrinterConnectivity {
     } catch {
         & $Log "Repair: no se pudo reiniciar el spooler: $($_.Exception.Message)"
     }
+}
+
+# ===================== CALIBRACION ESC/POS =====================
+# Helper de impresion CRUDA (RAW) para las pruebas de calibracion: manda bytes
+# ESC/POS directos a la impresora, sin pasar por el render GDI del driver.
+if (-not ("LidaRawCfg" -as [type])) {
+Add-Type -Language CSharp -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public class LidaRawCfg {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+  public struct DI { [MarshalAs(UnmanagedType.LPStr)] public string n;
+    [MarshalAs(UnmanagedType.LPStr)] public string o; [MarshalAs(UnmanagedType.LPStr)] public string t; }
+  [DllImport("winspool.drv",CharSet=CharSet.Ansi,SetLastError=true)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
+  public static string Send(string p, byte[] d){ IntPtr h;
+    if(!OpenPrinter(p,out h,IntPtr.Zero)) return "OpenPrinter FAIL "+Marshal.GetLastWin32Error();
+    var di=new DI(); di.n="LidaPrint calib"; di.t="RAW";
+    if(!StartDocPrinter(h,1,ref di)){ClosePrinter(h);return "StartDoc FAIL "+Marshal.GetLastWin32Error();}
+    StartPagePrinter(h); int w; bool ok=WritePrinter(h,d,d.Length,out w);
+    EndPagePrinter(h); EndDocPrinter(h); ClosePrinter(h);
+    return ok ? "OK" : "WritePrinter FAIL "+Marshal.GetLastWin32Error(); } }
+"@
+}
+
+function Get-CalibrationBytes {
+    # Construye las barras de calibracion: texto + una barra ESC * de cada ancho
+    # en $widths (puntos). El usuario mide el ancho real en mm de cada barra
+    # para deducir la densidad horizontal y el ancho maximo imprimible.
+    param([int[]]$widths = @(200, 400))
+    $b = New-Object System.Collections.Generic.List[byte]
+    $ESC = 0x1B; $LF = 0x0A
+    function AddStr($s) { foreach ($c in [System.Text.Encoding]::ASCII.GetBytes($s)) { $b.Add($c) } }
+    $b.Add($ESC); $b.Add(0x40)                 # ESC @ init
+    $b.Add($ESC); $b.Add(0x33); $b.Add(14)     # interlineado
+    AddStr "LIDAPRINT - CALIBRACION`n`n"
+    foreach ($wd in $widths) {
+        AddStr "Barra $wd puntos:`n"
+        $nL = $wd -band 0xFF; $nH = ($wd -shr 8) -band 0xFF
+        for ($i = 0; $i -lt 3; $i++) {
+            $b.Add($ESC); $b.Add(0x2A); $b.Add(1); $b.Add([byte]$nL); $b.Add([byte]$nH)
+            for ($x = 0; $x -lt $wd; $x++) { $b.Add(0xFF) }
+            $b.Add($LF)
+        }
+        AddStr "`n"
+    }
+    AddStr "Mida cada barra en mm.`n`n`n`n"
+    return $b.ToArray()
 }
 
 # ===================== DETECTAR MOTOR DE IMPRESION =====================
@@ -957,6 +1010,121 @@ $tQ.Controls.Add($lblQHint)
 
 $tabs.TabPages.Add($tQ)
 
+# ===================== TAB: CALIBRACION (ESC/POS) =====================
+$tC = New-Object System.Windows.Forms.TabPage
+$tC.Text = "Calibracion"
+Set-DarkTheme $tC
+
+$grpEsc = New-Object System.Windows.Forms.GroupBox
+$grpEsc.Text = "Impresion ESC/POS (ticketeras por adaptador USB-paralelo)"
+$grpEsc.Location = New-Object System.Drawing.Point(10, 10)
+$grpEsc.Size = New-Object System.Drawing.Size(590, 130)
+Set-DarkTheme $grpEsc
+$tC.Controls.Add($grpEsc)
+
+$chkEscpos = New-Object System.Windows.Forms.CheckBox
+$chkEscpos.Text = "Imprimir por ESC/POS crudo (para impresoras cuyo driver no acepta GDI)"
+$chkEscpos.Location = New-Object System.Drawing.Point(10, 22)
+$chkEscpos.Size = New-Object System.Drawing.Size(560, 20)
+$chkEscpos.Checked = [bool]$config.escposEnabled
+Set-DarkTheme $chkEscpos
+$grpEsc.Controls.Add($chkEscpos)
+
+# Ancho imprimible (mm)
+$lblEscW = New-Object System.Windows.Forms.Label
+$lblEscW.Text = "Ancho imprimible (mm):"
+$lblEscW.Location = New-Object System.Drawing.Point(10, 54)
+$lblEscW.Size = New-Object System.Drawing.Size(140, 20)
+Set-DarkTheme $lblEscW
+$grpEsc.Controls.Add($lblEscW)
+
+$nudEscWidth = New-Object System.Windows.Forms.NumericUpDown
+$nudEscWidth.Location = New-Object System.Drawing.Point(155, 52)
+$nudEscWidth.Size = New-Object System.Drawing.Size(70, 20)
+$nudEscWidth.Minimum = 10; $nudEscWidth.Maximum = 300
+$nudEscWidth.DecimalPlaces = 1; $nudEscWidth.Increment = 0.5
+$nudEscWidth.Value = [decimal]$config.escposWidthMm
+Set-DarkTheme $nudEscWidth
+$grpEsc.Controls.Add($nudEscWidth)
+
+# DPI horizontal
+$lblEscH = New-Object System.Windows.Forms.Label
+$lblEscH.Text = "DPI horiz.:"
+$lblEscH.Location = New-Object System.Drawing.Point(240, 54)
+$lblEscH.Size = New-Object System.Drawing.Size(65, 20)
+Set-DarkTheme $lblEscH
+$grpEsc.Controls.Add($lblEscH)
+
+$nudEscHdpi = New-Object System.Windows.Forms.NumericUpDown
+$nudEscHdpi.Location = New-Object System.Drawing.Point(305, 52)
+$nudEscHdpi.Size = New-Object System.Drawing.Size(70, 20)
+$nudEscHdpi.Minimum = 50; $nudEscHdpi.Maximum = 400
+$nudEscHdpi.DecimalPlaces = 2; $nudEscHdpi.Increment = 0.25
+$nudEscHdpi.Value = [decimal]$config.escposHdpi
+Set-DarkTheme $nudEscHdpi
+$grpEsc.Controls.Add($nudEscHdpi)
+
+# DPI vertical
+$lblEscV = New-Object System.Windows.Forms.Label
+$lblEscV.Text = "DPI vert.:"
+$lblEscV.Location = New-Object System.Drawing.Point(390, 54)
+$lblEscV.Size = New-Object System.Drawing.Size(60, 20)
+Set-DarkTheme $lblEscV
+$grpEsc.Controls.Add($lblEscV)
+
+$nudEscVdpi = New-Object System.Windows.Forms.NumericUpDown
+$nudEscVdpi.Location = New-Object System.Drawing.Point(450, 52)
+$nudEscVdpi.Size = New-Object System.Drawing.Size(65, 20)
+$nudEscVdpi.Minimum = 50; $nudEscVdpi.Maximum = 400
+$nudEscVdpi.DecimalPlaces = 2; $nudEscVdpi.Increment = 0.25
+$nudEscVdpi.Value = [decimal]$config.escposVdpi
+Set-DarkTheme $nudEscVdpi
+$grpEsc.Controls.Add($nudEscVdpi)
+
+# Densidad ESC * (0 simple / 1 doble)
+$lblEscD = New-Object System.Windows.Forms.Label
+$lblEscD.Text = "Densidad (0 simple / 1 doble):"
+$lblEscD.Location = New-Object System.Drawing.Point(10, 88)
+$lblEscD.Size = New-Object System.Drawing.Size(180, 20)
+Set-DarkTheme $lblEscD
+$grpEsc.Controls.Add($lblEscD)
+
+$nudEscDensity = New-Object System.Windows.Forms.NumericUpDown
+$nudEscDensity.Location = New-Object System.Drawing.Point(195, 86)
+$nudEscDensity.Size = New-Object System.Drawing.Size(50, 20)
+$nudEscDensity.Minimum = 0; $nudEscDensity.Maximum = 1
+$nudEscDensity.Value = [decimal]$config.escposDensity
+Set-DarkTheme $nudEscDensity
+$grpEsc.Controls.Add($nudEscDensity)
+
+# Boton: imprimir barras de calibracion
+$btnCalibBars = New-Object System.Windows.Forms.Button
+$btnCalibBars.Text = "Imprimir barras de calibracion"
+$btnCalibBars.Location = New-Object System.Drawing.Point(10, 150)
+$btnCalibBars.Size = New-Object System.Drawing.Size(230, 28)
+$btnCalibBars.Add_Click({
+    if (-not $cmbPrinter.SelectedItem) {
+        [System.Windows.Forms.MessageBox]::Show("Seleccione una impresora en la pestana Impresion.", "LidaPrint") | Out-Null; return
+    }
+    $res = [LidaRawCfg]::Send([string]$cmbPrinter.SelectedItem, (Get-CalibrationBytes @(200, 400)))
+    if ($res -eq "OK") {
+        [System.Windows.Forms.MessageBox]::Show("Barras enviadas. Mida cada una en mm:`n`n- El ancho maximo (barra que llena el papel) es el Ancho imprimible.`n- DPI horiz. = puntos / (mm / 25.4). Ej: 200 pts / 32 mm -> 158.75.", "Calibracion") | Out-Null
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("No se pudo imprimir: $res", "Error", "OK", "Error") | Out-Null
+    }
+})
+Set-DarkTheme $btnCalibBars
+$tC.Controls.Add($btnCalibBars)
+
+$lblCalibHint = New-Object System.Windows.Forms.Label
+$lblCalibHint.Text = "Para ticketeras 9-agujas/termicas conectadas por un adaptador USB-a-paralelo (p. ej. CH340), el driver no acepta impresion grafica GDI y Ghostscript falla. Con ESC/POS activo, LidaPrint rasteriza el PDF y lo envia como imagen en bytes crudos.`n`nCalibracion: imprima las barras, mida cada una en mm y cargue el Ancho imprimible (la barra que llena el papel) y el DPI horizontal (puntos / mm x 25.4). El DPI vertical ajusta la proporcion; por defecto 72 para 9-agujas."
+$lblCalibHint.Location = New-Object System.Drawing.Point(12, 190)
+$lblCalibHint.Size = New-Object System.Drawing.Size(585, 130)
+Set-DarkTheme $lblCalibHint
+$tC.Controls.Add($lblCalibHint)
+
+$tabs.TabPages.Add($tC)
+
 # ===================== TAB 4: MONITOREO =====================
 $t4 = New-Object System.Windows.Forms.TabPage
 $t4.Text = "Monitoreo"
@@ -1422,6 +1590,11 @@ $btnSave.Add_Click({
         webEnabled     = $chkWeb.Checked
         webPort        = [int]$nudPort.Value
         webApiKey      = $txtApiKey.Text
+        escposEnabled  = $chkEscpos.Checked
+        escposWidthMm  = [decimal]$nudEscWidth.Value
+        escposHdpi     = [decimal]$nudEscHdpi.Value
+        escposVdpi     = [decimal]$nudEscVdpi.Value
+        escposDensity  = [int]$nudEscDensity.Value
     }
 
     Save-Config $newConfig

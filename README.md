@@ -133,7 +133,7 @@ Get-ScheduledTask   -TaskName "LidaPrint"    # ver estado
 
 ## Configuracion (Configurator)
 
-Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro, 6 pestanas.
+Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro.
 
 ### Pestana 1: Impresion
 
@@ -209,7 +209,38 @@ especifica el area imprimible en pixeles.
 | Puerto | Puerto HTTP (muestra la URL al activar) | 8080 |
 | API Key | Clave de autenticacion (boton **Mostrar/Ocultar**). Obligatoria si la API esta activa | (vacio) |
 
-### Pestana 6: Sistema
+### Pestana: Calibracion (ESC/POS)
+
+Para ticketeras **9-agujas o termicas** cuyo driver **no acepta impresion grafica GDI**
+por el puerto disponible (caso tipico: EPSON TM-U220 conectada por un adaptador
+**USB-a-paralelo** CH340). En esos equipos Ghostscript falla con `StartDoc` y no sale
+papel. Con el modo ESC/POS activo, LidaPrint **rasteriza el PDF a una imagen** y la envia
+como comandos de imagen (`ESC *`) en **bytes crudos (RAW)**, la unica via que la impresora
+acepta por ese adaptador.
+
+| Campo | Descripcion | Default |
+|-------|-------------|---------|
+| Imprimir por ESC/POS crudo | Activa la via RAW en vez de la impresion GDI/Ghostscript | desactivado |
+| Ancho imprimible (mm) | Ancho fisico maximo del cabezal (la barra que llena el papel) | 64 |
+| DPI horizontal | Densidad de puntos horizontal (`puntos / mm x 25.4`) | 158.75 |
+| DPI vertical | Densidad vertical de la banda de 8 puntos (ajusta la proporcion) | 72 |
+| Densidad | Modo `ESC *`: `0` simple, `1` doble | 1 |
+
+**Boton "Imprimir barras de calibracion":** imprime dos barras negras de ancho conocido
+(200 y 400 puntos). Se miden en mm para deducir los valores:
+
+- **Ancho imprimible** = ancho en mm de la barra que llena todo el papel.
+- **DPI horizontal** = `puntos / (mm / 25.4)`. Ejemplo: 200 puntos que miden 32mm ->
+  `200 / (32/25.4)` = **158.75**.
+- **DPI vertical**: por defecto **72** para 9-agujas; subir/bajar si la altura sale
+  estirada o aplastada.
+
+> Con ESC/POS, el reporte de Odoo debe estar disenado al tamano del papel (no A4): el
+> paperformat de Odoo, la pestana **Papel** de LidaPrint y el papel fisico deben coincidir
+> para que la salida sea 1:1 sin deformacion. El ancho del contenido no puede superar el
+> **Ancho imprimible** del cabezal.
+
+### Pestana: Sistema
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|

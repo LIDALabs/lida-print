@@ -280,8 +280,138 @@ function Invoke-PrintGhostscript {
     }
 }
 
+# Helper de impresion CRUDA (RAW datatype) via WritePrinter. Necesario para la
+# via ESC/POS: manda bytes directos al puerto, sin pasar por el render GDI del
+# driver. Imprescindible en ticketeras EPSON conectadas por adaptador
+# USB-a-paralelo (CH340), donde el driver EPSON no acepta trabajos GDI.
+if (-not ("LidaRaw" -as [type])) {
+Add-Type -Language CSharp -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public class LidaRaw {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+  public struct DI { [MarshalAs(UnmanagedType.LPStr)] public string n;
+    [MarshalAs(UnmanagedType.LPStr)] public string o; [MarshalAs(UnmanagedType.LPStr)] public string t; }
+  [DllImport("winspool.drv",CharSet=CharSet.Ansi,SetLastError=true)] public static extern bool OpenPrinter(string s,out IntPtr h,IntPtr d);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool StartDocPrinter(IntPtr h,int l,ref DI di);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
+  [DllImport("winspool.drv",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
+  public static string Send(string p, byte[] d){ IntPtr h;
+    if(!OpenPrinter(p,out h,IntPtr.Zero)) return "OpenPrinter FAIL "+Marshal.GetLastWin32Error();
+    var di=new DI(); di.n="LidaPrint ESCPOS"; di.t="RAW";
+    if(!StartDocPrinter(h,1,ref di)){ClosePrinter(h);return "StartDoc FAIL "+Marshal.GetLastWin32Error();}
+    StartPagePrinter(h); int w; bool ok=WritePrinter(h,d,d.Length,out w);
+    EndPagePrinter(h); EndDocPrinter(h); ClosePrinter(h);
+    if(!ok) return "WritePrinter FAIL "+Marshal.GetLastWin32Error();
+    return "OK"; } }
+"@
+}
+
+function Read-PbmToken {
+    # Lee un token del header PBM/PGM saltando espacios y comentarios (#...).
+    param([byte[]]$b, [ref]$i)
+    while ($true) {
+        $c = $b[$i.Value]
+        if ($c -eq 32 -or $c -eq 10 -or $c -eq 13 -or $c -eq 9) { $i.Value++; continue }
+        if ($c -eq 35) { while ($b[$i.Value] -ne 10) { $i.Value++ }; continue }
+        break
+    }
+    $s = ""
+    while ($b[$i.Value] -notin 32, 10, 13, 9) { $s += [char]$b[$i.Value]; $i.Value++ }
+    return $s
+}
+
+function Invoke-PrintEscPos {
+    # Via ESC/POS raster: rasteriza el PDF a un bitmap monocromo del ancho
+    # imprimible y lo manda como comandos de imagen (ESC *) en bytes crudos.
+    # Para ticketeras 9-agujas / termicas cuyo driver no acepta impresion GDI
+    # por el puerto disponible (p. ej. EPSON TM-U220 por adaptador CH340).
+    #
+    # Densidades calibradas por impresora (pestana Calibracion del Configurator):
+    #   escposWidthMm : ancho imprimible real (barra de 400 puntos medida).
+    #   escposHdpi    : puntos por pulgada horizontal (200 puntos / mm medidos).
+    #   escposVdpi    : densidad vertical de la banda de 8 puntos.
+    param([string]$filePath)
+    $fileName = Split-Path $filePath -Leaf
+    $widthMm = if ($config.escposWidthMm) { [double]$config.escposWidthMm } else { 64 }
+    $hdpi    = if ($config.escposHdpi)    { [double]$config.escposHdpi }    else { 158.75 }
+    $vdpi    = if ($config.escposVdpi)    { [double]$config.escposVdpi }    else { 72 }
+    $m       = if ($null -ne $config.escposDensity) { [int]$config.escposDensity } else { 1 }
+
+    try {
+        # 1) Sonda de aspecto de pagina (render cuadrado a baja resolucion).
+        $probe = Join-Path $script:tempDir ("escpos_probe_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
+        $probeArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -r24 `"-sOutputFile=$probe`" -f `"$filePath`""
+        Invoke-ProcessCapture $gsResolved $probeArgs | Out-Null
+        if (-not (Test-Path $probe)) { return @{ Success = $false; Message = "ESC/POS: no se pudo leer el PDF: $fileName" } }
+        $pb = [System.IO.File]::ReadAllBytes($probe)
+        $pi = 2
+        $pw = [int](Read-PbmToken $pb ([ref]$pi)); $ph = [int](Read-PbmToken $pb ([ref]$pi))
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        $aspect = $ph / $pw
+
+        # 2) Render final: ancho fijo (imprimible), alto por aspecto, densidades
+        #    H/V separadas para que la proporcion en papel sea correcta.
+        $wPts = [math]::Round($widthMm * 2.83465, 2)
+        $hPts = [math]::Round($wPts * $aspect, 2)
+        $pbm = Join-Path $script:tempDir ("escpos_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
+        Remove-Item -LiteralPath $pbm -Force -ErrorAction SilentlyContinue
+        $rArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -dFIXEDMEDIA -dPDFFitPage " +
+                 "-dDEVICEWIDTHPOINTS=$wPts -dDEVICEHEIGHTPOINTS=$hPts -r$hdpi" + "x" + "$vdpi " +
+                 "`"-sOutputFile=$pbm`" -f `"$filePath`""
+        $rc = Invoke-ProcessCapture $gsResolved $rArgs
+        if (-not (Test-Path $pbm)) { return @{ Success = $false; Message = "ESC/POS: fallo el rasterizado (gs $rc): $fileName" } }
+
+        # 3) Parsear PBM (P4 binario) y codificar a ESC * en bandas de 8 puntos.
+        $raw = [System.IO.File]::ReadAllBytes($pbm)
+        $idx = 2
+        $w = [int](Read-PbmToken $raw ([ref]$idx)); $h = [int](Read-PbmToken $raw ([ref]$idx)); $idx++
+        $rowBytes = [int][math]::Ceiling($w / 8.0); $pixStart = $idx
+        $lineSpacing = [int][math]::Round(8 * 216 / $vdpi)
+
+        $out = New-Object System.Collections.Generic.List[byte]
+        $ESC = 0x1B; $LF = 0x0A
+        $out.Add($ESC); $out.Add(0x40)                            # ESC @ init
+        $out.Add($ESC); $out.Add(0x33); $out.Add([byte]$lineSpacing)  # ESC 3 n interlineado
+        $nL = $w -band 0xFF; $nH = ($w -shr 8) -band 0xFF
+        $bands = [int][math]::Ceiling($h / 8.0)
+        for ($band = 0; $band -lt $bands; $band++) {
+            $out.Add($ESC); $out.Add(0x2A); $out.Add([byte]$m); $out.Add([byte]$nL); $out.Add([byte]$nH)
+            for ($x = 0; $x -lt $w; $x++) {
+                $bv = 0
+                for ($k = 0; $k -lt 8; $k++) {
+                    $r = $band * 8 + $k
+                    if ($r -lt $h) {
+                        $bi = $pixStart + $r * $rowBytes + [int][math]::Floor($x / 8)
+                        if ($bi -lt $raw.Length -and ((($raw[$bi] -shr (7 - ($x % 8))) -band 1) -eq 1)) {
+                            $bv = $bv -bor (1 -shl (7 - $k))
+                        }
+                    }
+                }
+                $out.Add([byte]$bv)
+            }
+            $out.Add($LF)
+        }
+        1..6 | ForEach-Object { $out.Add($LF) }                   # avanzar para cortar
+        Remove-Item -LiteralPath $pbm -Force -ErrorAction SilentlyContinue
+
+        $res = [LidaRaw]::Send($config.printer, $out.ToArray())
+        if ($res -eq "OK") {
+            return @{ Success = $true; Message = "Impreso (ESC/POS ${w}x${h} puntos, ${widthMm}mm): $fileName -> $($config.printer)" }
+        }
+        return @{ Success = $false; Message = "ESC/POS: $res imprimiendo $fileName" }
+    } catch {
+        return @{ Success = $false; Message = "ESC/POS: excepcion imprimiendo ${fileName}: $($_.Exception.Message)" }
+    }
+}
+
 function Invoke-Print {
     param([string]$filePath)
+    if ($config.escposEnabled) {
+        return Invoke-PrintEscPos $filePath
+    }
     return Invoke-PrintGhostscript $filePath
 }
 
