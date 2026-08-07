@@ -210,12 +210,15 @@ function Invoke-PrintGhostscript {
     # comandos. pdfwrite si los respeta: se re-formatea el PDF al tamano
     # configurado (contenido escalado adentro con FitPage) y ESE es el que se
     # imprime en la pasada 2.
+    # Cultura invariante: los flotantes que van a Ghostscript (-dDEVICE*POINTS,
+    # -c BeginPage) deben usar punto decimal, no la coma del locale es-VE.
+    $ic = [System.Globalization.CultureInfo]::InvariantCulture
     $paper = Get-PaperPoints
     $wPts = $paper[0]; $hPts = $paper[1]
     if ($config.orientation -eq "landscape") { $tmp = $wPts; $wPts = $hPts; $hPts = $tmp }
 
     $resized = Join-Path $script:tempDir ("lidaprint_fit_" + [System.IO.Path]::GetFileName($filePath))
-    $fitArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dDEVICEWIDTHPOINTS=$wPts -dDEVICEHEIGHTPOINTS=$hPts -dFIXEDMEDIA -dFitPage `"-sOutputFile=$resized`" -f `"$filePath`""
+    $fitArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dDEVICEWIDTHPOINTS=$(([double]$wPts).ToString($ic)) -dDEVICEHEIGHTPOINTS=$(([double]$hPts).ToString($ic)) -dFIXEDMEDIA -dFitPage `"-sOutputFile=$resized`" -f `"$filePath`""
     $fitCode = Invoke-ProcessCapture $gsResolved $fitArgs
     $printSource = $filePath
     if ($fitCode -eq 0 -and (Test-Path $resized)) {
@@ -258,7 +261,9 @@ function Invoke-PrintGhostscript {
     if ($offX -ne 0 -or $offY -ne 0 -or $userScale -ne 1.0) {
         # translate primero, scale despues: la escala queda anclada en el punto
         # ya desplazado, asi los margenes no se re-escalan.
-        $pageCmd = "<< /BeginPage { pop $offX $offY translate $userScale $userScale scale } >> setpagedevice"
+        $sOffX = ([double]$offX).ToString($ic); $sOffY = ([double]$offY).ToString($ic)
+        $sScale = ([double]$userScale).ToString($ic)
+        $pageCmd = "<< /BeginPage { pop $sOffX $sOffY translate $sScale $sScale scale } >> setpagedevice"
     }
 
     $gsArgs += "-sOutputFile=%printer%$($config.printer)"
@@ -356,6 +361,9 @@ function Invoke-PrintEscPos {
 
     try {
         if (-not ("System.Drawing.Bitmap" -as [type])) { Add-Type -AssemblyName System.Drawing }
+        # Cultura invariante: los flotantes que van a Ghostscript (-r, -c) deben
+        # usar punto decimal, no la coma del locale es-VE (rompe el parseo de gs).
+        $ic = [System.Globalization.CultureInfo]::InvariantCulture
 
         # 1) bbox del contenido (puntos). Descarta margenes/blanco del PDF.
         #    El device bbox escribe a STDERR: redirigir a archivo (capturar con
@@ -378,7 +386,7 @@ function Invoke-PrintEscPos {
         if ($bw -le 1 -or $bh -le 1) {
             # PDF sin bbox util (raro): usar pagina completa como respaldo.
             $probe = Join-Path $script:tempDir ("escpos_probe_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".pbm")
-            Invoke-ProcessCapture $gsResolved "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pbmraw -r24 `"-sOutputFile=$probe`" -f `"$filePath`"" | Out-Null
+            Invoke-ProcessCapture $gsResolved "-dBATCH -dNOPAUSE -dQUIET -dFirstPage=1 -dLastPage=1 -sDEVICE=pbmraw -r24 `"-sOutputFile=$probe`" -f `"$filePath`"" | Out-Null
             $pb = [System.IO.File]::ReadAllBytes($probe); $pi = 2
             $pw = [int](Read-PbmToken $pb ([ref]$pi)); $ph = [int](Read-PbmToken $pb ([ref]$pi))
             Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
@@ -386,28 +394,41 @@ function Invoke-PrintEscPos {
         }
         $rows = [int][math]::Round(($widthDots / $hdpi) * ($bh / $bw) * $vdpi)
         if ($rows -lt 1) { $rows = 1 }
-        $rHdpi = $widthDots * 72.0 / $bw
-        $rVdpi = $rows * 72.0 / $bh
-        $inst = "<</Install{ $([math]::Round(-1 * $llx, 3)) $([math]::Round(-1 * $lly, 3)) translate }>> setpagedevice"
+        $rHdpi = ($widthDots * 72.0 / $bw).ToString($ic)
+        $rVdpi = ($rows * 72.0 / $bh).ToString($ic)
+        $tx = ([math]::Round(-1 * $llx, 3)).ToString($ic)
+        $ty = ([math]::Round(-1 * $lly, 3)).ToString($ic)
+        $inst = "<</Install{ $tx $ty translate }>> setpagedevice"
 
         # 3) Render gris (antialias) o mono, recortado+escalado al destino.
+        #    -dFirstPage/-dLastPage: el bbox se midio en la pagina 1; renderizar
+        #    solo esa pagina para no meter paginas extra en la geometria fija.
         $png = Join-Path $script:tempDir ("escpos_" + [System.IO.Path]::GetFileNameWithoutExtension($filePath) + ".png")
         Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue
         $aa = if ($antialias) { "-dTextAlphaBits=4 -dGraphicsAlphaBits=4" } else { "" }
-        $rArgs = "-dBATCH -dNOPAUSE -dQUIET -sDEVICE=pnggray $aa -g${widthDots}x${rows} " +
-                 "-r$rHdpi" + "x" + "$rVdpi -dFIXEDMEDIA `"-sOutputFile=$png`" -c `"$inst`" -f `"$filePath`""
+        $rArgs = "-dBATCH -dNOPAUSE -dQUIET -dFirstPage=1 -dLastPage=1 -sDEVICE=pnggray $aa -g${widthDots}x${rows} " +
+                 "-r${rHdpi}x${rVdpi} -dFIXEDMEDIA `"-sOutputFile=$png`" -c `"$inst`" -f `"$filePath`""
         $rc = Invoke-ProcessCapture $gsResolved $rArgs
         if (-not (Test-Path $png)) { return @{ Success = $false; Message = "ESC/POS: fallo el rasterizado (gs $rc): $fileName" } }
 
-        # 4) Leer los grises via LockBits (rapido) y umbralizar.
+        # 4) Leer los grises via LockBits (rapido) y umbralizar. try/finally para
+        #    liberar SIEMPRE el bitmap/lockbits (fuga de handles GDI+ si excepta).
+        $w = 0; $h = 0; $stride = 0; $buf = $null
         $bmp = New-Object System.Drawing.Bitmap($png)
-        $w = $bmp.Width; $h = $bmp.Height
-        $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
-        $bd = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
-        $stride = $bd.Stride
-        $buf = New-Object byte[] ($stride * $h)
-        [System.Runtime.InteropServices.Marshal]::Copy($bd.Scan0, $buf, 0, $buf.Length)
-        $bmp.UnlockBits($bd); $bmp.Dispose()
+        try {
+            $w = $bmp.Width; $h = $bmp.Height
+            $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
+            $bd = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+            try {
+                $stride = $bd.Stride
+                $buf = New-Object byte[] ($stride * $h)
+                [System.Runtime.InteropServices.Marshal]::Copy($bd.Scan0, $buf, 0, $buf.Length)
+            } finally {
+                $bmp.UnlockBits($bd)
+            }
+        } finally {
+            $bmp.Dispose()
+        }
         Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue
 
         # 5) Codificar en bandas ESC * de 8 puntos. Negro si gris < umbral.
