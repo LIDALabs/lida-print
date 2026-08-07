@@ -1,3 +1,10 @@
+# Artefactos de tooling y de planificacion (no se versionan)
+.atl/
+docs/superpowers/
+
+# Config local del entorno de pruebas
+_test_*.json
+
 # Logs (se generan en runtime)
 logs/
 *.log
