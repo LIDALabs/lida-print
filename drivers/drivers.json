@@ -9,7 +9,14 @@
       "setupPath": "APD_459aE.exe",
       "sha256": "0AD8559EEFD7FF62FCF14723F3CB7DAC02A552453F47AD0279AD4285DA0F0FB3",
       "silentArgs": "",
-      "notes": "Ticketera matricial 76mm. APD v4.59aE — soporta TM-U220A/B/D."
+      "notes": "Ticketera matricial 76mm. APD v4.59aE — soporta TM-U220A/B/D.",
+      "postInstall": {
+        "printerNameMatch": "TM-U220",
+        "rebindToUsb": true,
+        "usbPortMatch": "EPSONTM|TM-U220",
+        "disableBidi": true,
+        "clearOffline": true
+      }
     },
     {
       "id": "canon-lbp6030",

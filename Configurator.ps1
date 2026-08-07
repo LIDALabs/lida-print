@@ -125,6 +125,93 @@ function Install-PrinterDriver {
     }
 }
 
+function Repair-PrinterConnectivity {
+    <#
+    .SYNOPSIS
+        Deja utilizable una impresora recien instalada que quedo inalcanzable.
+    .DESCRIPTION
+        Algunas ticketeras EPSON (APD) conectadas por un adaptador USB-a-paralelo
+        (p. ej. CH340) quedan atadas al puerto propio de EPSON (ESDPRT), que usa
+        deteccion USB nativa EPSON y NUNCA encuentra al adaptador generico. El
+        trabajo entra al spooler pero no sale papel. Ademas el driver hace polling
+        bidireccional de estado que el adaptador no responde, dejando la impresora
+        "Sin conexion".
+
+        Esta rutina, declarada por driver en drivers.json ("postInstall"), corrige
+        eso sin intervencion: reasigna la impresora al puerto USB estandar del
+        adaptador, desactiva el bidireccional y limpia el estado offline. Es
+        idempotente y no lanza: cualquier fallo se registra y se continua.
+
+        Bloque postInstall (todos los campos opcionales):
+          printerNameMatch : regex del nombre de la impresora instalada.
+          rebindToUsb      : reasignar de un puerto ESDPRT/EPSON al USB del equipo.
+          usbPortMatch     : regex de la descripcion del puerto USB fisico a elegir.
+          disableBidi      : apagar el soporte bidireccional (EnableBIDI=false).
+          clearOffline     : quitar el flag "usar impresora sin conexion".
+    #>
+    param(
+        [Parameter(Mandatory)]$Driver,
+        [scriptblock]$Log = { param($m) }
+    )
+    $pi = $Driver.postInstall
+    if (-not $pi) { return }
+    $nameRe = if ($pi.printerNameMatch) { $pi.printerNameMatch } else { $Driver.name }
+
+    $printers = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $nameRe })
+    if (-not $printers) {
+        & $Log "Repair: no se encontro impresora que coincida con '$nameRe' (¿se completo el asistente del driver?)."
+        return
+    }
+
+    foreach ($printer in $printers) {
+        # 1) Reasignar del puerto EPSON (ESDPRT) al puerto USB del adaptador.
+        if ($pi.rebindToUsb -and $printer.PortName -notmatch '^USB\d+') {
+            $usbRe = if ($pi.usbPortMatch) { $pi.usbPortMatch } else { '.' }
+            # Puertos USB con un dispositivo real: la descripcion trae el ID 1284
+            # de la impresora, no el marcador vacio de "puerto virtual".
+            $usbPort = Get-PrinterPort -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^USB\d+' -and $_.Description -match $usbRe } |
+                Select-Object -First 1
+            if ($usbPort) {
+                try {
+                    Set-Printer -Name $printer.Name -PortName $usbPort.Name -ErrorAction Stop
+                    & $Log "Repair: '$($printer.Name)' reasignada de $($printer.PortName) a $($usbPort.Name)."
+                } catch {
+                    & $Log "Repair: no se pudo reasignar el puerto de '$($printer.Name)': $($_.Exception.Message)"
+                }
+            } else {
+                & $Log "Repair: no hay puerto USB que coincida con '$usbRe' para '$($printer.Name)'."
+            }
+        }
+
+        # 2) Desactivar el bidireccional: el adaptador paralelo no responde el
+        #    protocolo de estado EPSON y sin esto la impresora queda "offline".
+        if ($pi.disableBidi) {
+            try {
+                $wmi = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$($printer.Name)'" -ErrorAction Stop
+                Set-CimInstance -InputObject $wmi -Property @{ EnableBIDI = $false } -ErrorAction Stop
+                & $Log "Repair: bidireccional desactivado en '$($printer.Name)'."
+            } catch {
+                & $Log "Repair: no se pudo desactivar el bidireccional de '$($printer.Name)': $($_.Exception.Message)"
+            }
+        }
+
+        # 3) Limpiar el flag "usar impresora sin conexion".
+        if ($pi.clearOffline) {
+            & rundll32.exe printui.dll,PrintUIEntry /Xs /n $printer.Name attributes -WorkOffline 2>&1 | Out-Null
+            & $Log "Repair: estado 'sin conexion' limpiado en '$($printer.Name)'."
+        }
+    }
+
+    # Reiniciar el spooler para que la nueva asignacion de puerto tome efecto.
+    try {
+        Restart-Service Spooler -Force -ErrorAction Stop
+        & $Log "Repair: spooler reiniciado."
+    } catch {
+        & $Log "Repair: no se pudo reiniciar el spooler: $($_.Exception.Message)"
+    }
+}
+
 # ===================== DETECTAR MOTOR DE IMPRESION =====================
 function Find-Ghostscript {
     $local = Join-Path $scriptDir "bin\gswin64c.exe"
@@ -1157,7 +1244,19 @@ $btnDrvInstall.Add_Click({
     try {
         $code = Install-PrinterDriver -Driver $drv -BaseUrl $baseUrl
         if ($code -eq 0) {
-            $lblDrvStatus.Text = "Driver instalado correctamente."
+            # Dejar la impresora utilizable de inmediato (reasignar puerto USB,
+            # desactivar bidireccional, limpiar offline) segun postInstall.
+            $repairLog = {
+                param($m)
+                try {
+                    $logDir = Join-Path $scriptDir "logs"
+                    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+                    Add-Content -Path (Join-Path $logDir ("PrintLog_{0:yyyy-MM}.txt" -f (Get-Date))) `
+                        -Value ("[{0:yyyy-MM-dd HH:mm:ss}] [DRIVER] {1}" -f (Get-Date), $m)
+                } catch { }
+            }
+            Repair-PrinterConnectivity -Driver $drv -Log $repairLog
+            $lblDrvStatus.Text = "Driver instalado y configurado correctamente."
             [System.Windows.Forms.MessageBox]::Show("$($drv.name) instalado correctamente.", "LidaPrint") | Out-Null
         } else {
             $lblDrvStatus.Text = "El instalador devolvio el codigo $code."

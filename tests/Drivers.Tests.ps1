@@ -29,4 +29,21 @@ Describe "drivers.json manifest" {
             (Get-Item (Join-Path $script:repoRoot $d.file)).Length | Should -BeLessThan 100MB
         }
     }
+    It "postInstall (si existe) tiene tipos validos" {
+        foreach ($d in $script:manifest.drivers) {
+            if ($d.PSObject.Properties.Name -contains 'postInstall' -and $d.postInstall) {
+                $pi = $d.postInstall
+                if ($pi.PSObject.Properties.Name -contains 'printerNameMatch') { $pi.printerNameMatch | Should -Not -BeNullOrEmpty }
+                if ($pi.PSObject.Properties.Name -contains 'usbPortMatch')     { $pi.usbPortMatch     | Should -Not -BeNullOrEmpty }
+                foreach ($flag in 'rebindToUsb','disableBidi','clearOffline') {
+                    if ($pi.PSObject.Properties.Name -contains $flag) { $pi.$flag | Should -BeOfType [bool] }
+                }
+            }
+        }
+    }
+    It "el driver EPSON TM-U220 declara la reparacion post-instalacion" {
+        $epson = $script:manifest.drivers | Where-Object { $_.id -eq 'epson-tm-u220pd' }
+        $epson.postInstall.rebindToUsb | Should -BeTrue
+        $epson.postInstall.disableBidi | Should -BeTrue
+    }
 }
