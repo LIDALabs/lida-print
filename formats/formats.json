@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "formats": [
+    {
+      "id": "formato-iutepal",
+      "name": "Formato IUTEPAL",
+      "file": "formats/formato-iutepal.xml",
+      "description": "Plantilla QWeb de factura Forma Libre para ticketera EPSON TM-U220 (Odoo 18)",
+      "target": "l10n_ve_lidoo_invoice_report.report_factura_document"
+    }
+  ]
+}

@@ -94,6 +94,17 @@ function Get-DriverManifest {
     }
 }
 
+function Get-FormatManifest {
+    $url = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)/formats/formats.json"
+    try {
+        Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 30
+    } catch {
+        # Fallback: an installed exe whose tag was deleted, or dev checkout.
+        try { Invoke-RestMethod -Uri "https://raw.githubusercontent.com/LIDALabs/lida-print/main/formats/formats.json" -UseBasicParsing -TimeoutSec 30 }
+        catch { $null }
+    }
+}
+
 function Install-PrinterDriver {
     param(
         [Parameter(Mandatory)]$Driver,
@@ -1570,6 +1581,96 @@ $btnDrvInstall.Add_Click({
 $grpDrv.Controls.AddRange(@($lstDrv, $lblDrvNotes, $btnDrvInstall, $lblDrvStatus))
 $tDrv.Controls.Add($grpDrv)
 $tabs.TabPages.Add($tDrv)
+
+# ===================== TAB 8: FORMATOS =====================
+$tFmt = New-Object System.Windows.Forms.TabPage
+$tFmt.Text = "Formatos"
+Set-DarkTheme $tFmt
+
+$grpFmt = New-Object System.Windows.Forms.GroupBox
+$grpFmt.Text = "Formatos de factura disponibles"
+$grpFmt.Location = New-Object System.Drawing.Point(10, 10)
+$grpFmt.Size = New-Object System.Drawing.Size(590, 330)
+Set-DarkTheme $grpFmt
+
+$lstFmt = New-Object System.Windows.Forms.ListBox
+$lstFmt.Location = New-Object System.Drawing.Point(15, 25)
+$lstFmt.Size = New-Object System.Drawing.Size(400, 200)
+Set-DarkTheme $lstFmt
+
+$lblFmtNotes = New-Object System.Windows.Forms.Label
+$lblFmtNotes.Location = New-Object System.Drawing.Point(15, 235)
+$lblFmtNotes.Size = New-Object System.Drawing.Size(560, 30)
+$lblFmtNotes.Text = ""
+Set-DarkTheme $lblFmtNotes
+
+$btnFmtDownload = New-Object System.Windows.Forms.Button
+$btnFmtDownload.Text = "Descargar..."
+$btnFmtDownload.Location = New-Object System.Drawing.Point(15, 275)
+$btnFmtDownload.Size = New-Object System.Drawing.Size(200, 30)
+Set-DarkTheme $btnFmtDownload
+
+$lblFmtStatus = New-Object System.Windows.Forms.Label
+$lblFmtStatus.Location = New-Object System.Drawing.Point(230, 280)
+$lblFmtStatus.Size = New-Object System.Drawing.Size(345, 25)
+$lblFmtStatus.Text = ""
+Set-DarkTheme $lblFmtStatus
+
+$script:formatManifest = $null
+$tFmt.Add_Enter({
+    if (-not $script:formatManifest) {
+        $lblFmtStatus.Text = "Cargando lista de formatos..."
+        $script:formatManifest = Get-FormatManifest
+        $lstFmt.Items.Clear()
+        if ($script:formatManifest) {
+            foreach ($f in $script:formatManifest.formats) { [void]$lstFmt.Items.Add($f.name) }
+            $lblFmtStatus.Text = ""
+        } else {
+            $lblFmtStatus.Text = "Sin conexion: no se pudo cargar la lista de formatos."
+        }
+    }
+})
+
+$lstFmt.Add_SelectedIndexChanged({
+    if ($lstFmt.SelectedIndex -ge 0) {
+        $lblFmtNotes.Text = $script:formatManifest.formats[$lstFmt.SelectedIndex].description
+    }
+})
+
+$btnFmtDownload.Add_Click({
+    if ($lstFmt.SelectedIndex -lt 0) {
+        [System.Windows.Forms.MessageBox]::Show("Seleccione un formato de la lista.", "LidaPrint") | Out-Null
+        return
+    }
+    $fmt = $script:formatManifest.formats[$lstFmt.SelectedIndex]
+    $baseUrl = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)"
+    $sfd = New-Object System.Windows.Forms.SaveFileDialog
+    $sfd.FileName = Split-Path -Leaf $fmt.file
+    $sfd.Filter = "XML|*.xml"
+    if ($sfd.ShowDialog() -ne "OK") { return }
+
+    $btnFmtDownload.Enabled = $false
+    $lblFmtStatus.Text = "Descargando $($fmt.name)..."
+    $lblFmtStatus.Refresh(); [System.Windows.Forms.Application]::DoEvents()
+    $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    try {
+        $url = "$baseUrl/$($fmt.file)"
+        Invoke-WebRequest -Uri $url -OutFile $sfd.FileName -UseBasicParsing -TimeoutSec 60
+        $lblFmtStatus.Text = "Formato descargado correctamente."
+        [System.Windows.Forms.MessageBox]::Show("$($fmt.name) descargado en $($sfd.FileName).", "LidaPrint") | Out-Null
+    } catch {
+        $lblFmtStatus.Text = "Error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("No se pudo descargar el formato: $($_.Exception.Message)", "LidaPrint",
+            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } finally {
+        $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        $btnFmtDownload.Enabled = $true
+    }
+})
+
+$grpFmt.Controls.AddRange(@($lstFmt, $lblFmtNotes, $btnFmtDownload, $lblFmtStatus))
+$tFmt.Controls.Add($grpFmt)
+$tabs.TabPages.Add($tFmt)
 
 $form.Controls.Add($tabs)
 
