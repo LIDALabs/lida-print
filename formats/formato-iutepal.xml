@@ -13,11 +13,11 @@
                  .ff-small  -&gt; coletilla, notas y comentarios
                  .ff-total  -&gt; bloque de totales (queda grande a propósito)
                ============================================================== */
-            .ff-titulo { font-size: 12pt !important; }
-            .ff-base   { font-size: 12pt !important; }
-            .ff-small  { font-size: 12pt !important; }
-            .ff-items  { font-size: 12pt !important; }
-            .ff-total  { font-size: 12pt !important; }
+            .ff-titulo { font-size: 11pt !important; }
+            .ff-base   { font-size: 11pt !important; }
+            .ff-small  { font-size: 11pt !important; }
+            .ff-items  { font-size: 11pt !important; }
+            .ff-total  { font-size: 11pt !important; }
 
             /* ===== Interlineado compacto en toda la factura ================
                line-height ajustado y sin padding vertical en celdas ni
