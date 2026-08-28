@@ -28,6 +28,8 @@
             .ff-doc p, .ff-doc h3, .ff-doc div { margin-top: 0 !important; margin-bottom: 0 !important; }
             .ff-doc thead th { padding-bottom: 1px !important; }
             .ff-doc #total { margin-top: 2mm !important; }
+            /* Aire minimo entre las lineas separadoras y Subtotal / Total */
+            .ff-doc .ff-total td[style*="border-top"] { padding-top: 1mm !important; padding-bottom: 1mm !important; }
 
             /* Las celdas heredan el tamaño de su tabla contenedora */
             .ff-base td, .ff-base th, .ff-base span,
