@@ -77,7 +77,7 @@
           <!-- Altura minima (mm) de la zona cabecera + lineas. Los totales siempre
                arrancan a esta altura como minimo; con mas items el bloque crece.
                Ajustar aqui en vez de agregar <br/>. -->
-          <t t-set="ff_min_h" t-value="117 if (o.reversed_entry_id or o.debit_origin_id) else 115"/>
+          <t t-set="ff_min_h" t-value="116 if (o.reversed_entry_id or o.debit_origin_id) else 114"/>
 
           <div class="ff-doc">
           <div class="row">
