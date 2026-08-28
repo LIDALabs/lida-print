@@ -897,7 +897,7 @@ Set-DarkTheme $grpAlignment
 $t3.Controls.Add($grpAlignment)
 
 $lblLinePitch = New-Object System.Windows.Forms.Label
-$lblLinePitch.Text = "Salto de linea / Interlineado (mm):"
+$lblLinePitch.Text = "Separacion extra entre tickets (mm):"
 $lblLinePitch.Location = New-Object System.Drawing.Point(10, 25)
 $lblLinePitch.Size = New-Object System.Drawing.Size(220, 20)
 Set-DarkTheme $lblLinePitch
@@ -906,7 +906,7 @@ $grpAlignment.Controls.Add($lblLinePitch)
 $nudLinePitch = New-Object System.Windows.Forms.NumericUpDown
 $nudLinePitch.Location = New-Object System.Drawing.Point(240, 23)
 $nudLinePitch.Size = New-Object System.Drawing.Size(70, 20)
-$nudLinePitch.Minimum = 1
+$nudLinePitch.Minimum = 0
 $nudLinePitch.Maximum = 100
 $nudLinePitch.DecimalPlaces = 1
 $nudLinePitch.Increment = 0.1

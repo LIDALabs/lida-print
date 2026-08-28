@@ -455,6 +455,17 @@ function Invoke-PrintEscPos {
         }
         1..6 | ForEach-Object { $out.Add($LF) }                      # avanzar para cortar
 
+        # Separacion extra entre tickets: linePitch (mm) de la pestana Forma
+        # Continua, aplicada siempre (con o sin forma continua). Cada LF avanza
+        # una banda de 8 puntos al vdpi calibrado, asi los mm se traducen a
+        # saltos reales de esta impresora.
+        $extraMm = if ($config.linePitch) { [double]$config.linePitch } else { 0 }
+        if ($extraMm -gt 0) {
+            $mmPerLf = 8.0 * 25.4 / $vdpi
+            $extraLf = [int][math]::Round($extraMm / $mmPerLf)
+            if ($extraLf -gt 0) { 1..$extraLf | ForEach-Object { $out.Add($LF) } }
+        }
+
         $res = [LidaRaw]::Send($config.printer, $out.ToArray())
         if ($res -eq "OK") {
             return @{ Success = $true; Message = "Impreso (ESC/POS ${w}x${h} puntos, ${widthMm}mm): $fileName -> $($config.printer)" }
