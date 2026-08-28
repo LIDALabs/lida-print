@@ -777,11 +777,21 @@ h1{color:#89b4fa;font-size:20px}h3{color:#a6adc8;margin-top:24px;font-size:14px}
                             continue
                         }
 
-                        [System.IO.File]::WriteAllBytes($destPath, $bytes)
-
-                        if ($fileName -notin $pq.ToArray()) {
-                            [void]$pq.Add($fileName)
+                        # Cada subida es un trabajo de impresion propio. Si ya hay un
+                        # archivo con ese nombre en disco o en la cola (Odoo manda
+                        # "original" y "copia" con el mismo nombre al reimprimir),
+                        # NO sobreescribir ni deduplicar: renombrar con sufijo -N
+                        # para que salgan las dos impresiones.
+                        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                        $n = 1
+                        while ((Test-Path -LiteralPath $destPath) -or ($fileName -in $pq.ToArray())) {
+                            $n++
+                            $fileName = "$baseName-$n.pdf"
+                            $destPath = Join-Path $dlFolder $fileName
                         }
+
+                        [System.IO.File]::WriteAllBytes($destPath, $bytes)
+                        [void]$pq.Add($fileName)
 
                         $body = [System.Text.Encoding]::UTF8.GetBytes("{`"ok`":true,`"file`":`"$fileName`"}")
                         $resp.ContentType = "application/json"; $resp.ContentLength64 = $body.Length
