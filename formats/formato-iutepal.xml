@@ -19,13 +19,6 @@
             .ff-items  { font-size: 12pt !important; }
             .ff-total  { font-size: 12pt !important; }
 
-            /* Tamaños usados únicamente para el contacto especial */
-            .ff-special-contact .ff-titulo { font-size: 12pt !important; }
-            .ff-special-contact .ff-base   { font-size: 14pt !important; }
-            .ff-special-contact .ff-small  { font-size: 10pt !important; }
-            .ff-special-contact .ff-items  { font-size: 13pt !important; }
-            .ff-special-contact .ff-total  { font-size: 14pt !important; }
-
             /* ===== Interlineado compacto en toda la factura ================
                line-height ajustado y sin padding vertical en celdas ni
                márgenes entre bloques. Para separar más, subir line-height. */
@@ -79,14 +72,12 @@
           <!-- Helper de datos lidoo (equivale a la lógica de moneda/igtf/coletilla de v17) -->
           <t t-set="d" t-value="o._l10n_ve_lidoo_factura_data()"/>
 
-          <!-- Reemplaza el RIF por el del contacto real -->
-          <t t-set="es_contacto_especial" t-value="o.partner_id.commercial_partner_id.vat == 'J304689713'"/>
           <!-- Altura minima (mm) de la zona cabecera + lineas. Los totales siempre
                arrancan a esta altura como minimo; con mas items el bloque crece.
                Ajustar aqui en vez de agregar <br/>. -->
-          <t t-set="ff_min_h" t-value="(105 if es_contacto_especial else 118) if not (o.reversed_entry_id or o.debit_origin_id) else 120"/>
+          <t t-set="ff_min_h" t-value="120 if (o.reversed_entry_id or o.debit_origin_id) else 118"/>
 
-          <div t-att-class="'ff-doc ' + ('ff-special-contact' if es_contacto_especial else '')">
+          <div class="ff-doc">
           <div class="row">
             <div class="col-12">
               <h3 t-if="o.state == 'draft'" class="ff-titulo" style="position:absolute;left:10;top:32px;opacity: 0.3;">
@@ -404,5 +395,5 @@
               </div><!-- /.ff-totals-abs -->
             </div><!-- /.page -->
           </div>
-          </div><!-- /.ff-special-contact -->
+          </div><!-- /.ff-doc -->
         </t>
