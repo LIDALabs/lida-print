@@ -115,6 +115,76 @@ function Find-Gs {
     }
     return $null
 }
+
+# El instalador de Ghostscript (NSIS) ignora /S a proposito: desde 10.01.0
+# Artifex compila el instalador AGPL con "SetSilent normal" al inicio de
+# .onInit, asi que el asistente siempre aparece (y espera para siempre si
+# nadie ve el escritorio, p. ej. un servicio o SSH). En vez de /S se lanza
+# normal y este driver avanza el asistente enviando WM_COMMAND al control
+# ID 1 (Next / I Agree / Install / Finish en toda pagina NSIS) hasta que
+# termina; los cuadros de mensaje reciben No (7), si no Aceptar (1/2).
+# Pasado $TimeoutSec mata el instalador y devuelve 1460 (ERROR_TIMEOUT); si
+# no, el codigo de salida del instalador. Debe correr elevado: el instalador
+# exige admin y UIPI descarta mensajes desde un nivel de integridad menor.
+$gsSetupDriver = {
+    param([string]$Installer, [int]$TimeoutSec)
+    if (-not ('LidaPrintGs.Win32' -as [type])) {
+        Add-Type -Namespace LidaPrintGs -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+[DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dlg, int id);
+[DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
+'@
+    }
+    $proc = Start-Process -FilePath $Installer -PassThru
+    $null = $proc.Handle   # conserva el handle para poder leer ExitCode
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while (-not $proc.WaitForExit(700)) {
+        if ((Get-Date) -gt $deadline) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            return 1460
+        }
+        # [NullString]::Value: un $null simple llegaria como "" (titulo vacio)
+        $h = [IntPtr]::Zero
+        while (($h = [LidaPrintGs.Win32]::FindWindowEx([IntPtr]::Zero, $h, '#32770', [NullString]::Value)) -ne [IntPtr]::Zero) {
+            $wpid = [uint32]0
+            [void][LidaPrintGs.Win32]::GetWindowThreadProcessId($h, [ref]$wpid)
+            if ($wpid -ne $proc.Id) { continue }
+            # Asistente (tiene el area de pagina NSIS, ID 1018): solo el boton 1. Mensaje: 7, 1, 2.
+            $ids = if ([LidaPrintGs.Win32]::GetDlgItem($h, 1018) -ne [IntPtr]::Zero) { @(1) } else { @(7, 1, 2) }
+            foreach ($id in $ids) {
+                $btn = [LidaPrintGs.Win32]::GetDlgItem($h, $id)
+                if ($btn -ne [IntPtr]::Zero -and [LidaPrintGs.Win32]::IsWindowEnabled($btn)) {
+                    [void][LidaPrintGs.Win32]::PostMessage($h, 0x0111, [IntPtr]$id, $btn)   # WM_COMMAND
+                    break
+                }
+            }
+        }
+    }
+    return $proc.ExitCode
+}
+
+# Ejecuta $gsSetupDriver elevado: en este proceso si ya es admin; si no, en un
+# powershell.exe elevado (un solo UAC, aparece como Windows PowerShell). El
+# driver viaja como -EncodedCommand: no queda un script en disco que cambiar.
+function Invoke-GsSetup {
+    param([Parameter(Mandatory)][string]$Installer, [int]$TimeoutSec = 300)
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        return (& $gsSetupDriver $Installer $TimeoutSec)
+    }
+    $cmd = "exit (& {" + $gsSetupDriver.ToString() + "} '" + $Installer.Replace("'", "''") + "' $TimeoutSec)"
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    $p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru `
+        -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $enc"
+    $null = $p.Handle
+    # El driver ya mata al instalador en su limite; este margen solo cubre que
+    # el propio driver se cuelgue (un proceso elevado no se puede matar desde aqui).
+    if (-not $p.WaitForExit(($TimeoutSec + 60) * 1000)) { return 1460 }
+    return $p.ExitCode
+}
+
 $gsPath = Find-Gs
 
 if ($gsPath) {
@@ -162,8 +232,11 @@ if ($gsPath) {
             }
 
             if ($gsOk) {
-                Start-Process -FilePath $tempGs -ArgumentList "/S" -Wait
+                Write-Host "    Instalando GPL Ghostscript (licencia AGPL, ghostscript.com). Su asistente avanza solo, no lo cierres..."
+                $gsExit = Invoke-GsSetup -Installer $tempGs -TimeoutSec 300
                 Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
+                if ($gsExit -eq 1460) { Write-Warn "El instalador de Ghostscript no termino en 5 minutos y fue cancelado." }
+                elseif ($gsExit -ne 0) { Write-Warn "El instalador de Ghostscript termino con codigo $gsExit." }
                 $gsPath = Find-Gs
             }
         } catch {
