@@ -2,7 +2,7 @@
 
 Sistema de impresion automatica de facturas Odoo para Windows. Imprime cada PDF con Ghostscript (o ESC/POS crudo) y elimina el archivo. Tres modos: **Local** (vigila Descargas y filtra por patron de nombre), **Red local** (Odoo envia los PDF a esta PC por HTTP) y **Nube** (LidaPrint consulta a Odoo por HTTPS; sirve con Odoo en un VPS).
 
-Este es el **documento principal del proyecto**: cubre **uso**, **configuracion** y **funcionamiento interno** de LidaPrint. El lado de Odoo del modo Nube (modulo `l10n_ve_lidoo_integration_api` 18.0.2.4.0) esta documentado en [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md).
+Este es el **documento principal del proyecto**: cubre **uso**, **configuracion** y **funcionamiento interno** de LidaPrint. El lado de Odoo del modo Nube (modulo `l10n_ve_lidoo_integration_api` 18.0.2.4.0 o superior; se recomienda 18.0.2.4.1) esta documentado en [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md).
 
 ## Estructura del proyecto
 
@@ -79,6 +79,13 @@ Todo sin intervencion del usuario.
 - Ghostscript (el instalador lo instala automaticamente)
 - Impresora configurada en Windows
 - **No requiere Administrador** (Ghostscript puede pedir UAC una vez, si no esta instalado)
+
+> **Ghostscript:** si no esta instalado, el instalador de LidaPrint descarga GPL Ghostscript
+> (licencia AGPL) desde el repositorio oficial de Artifex, verifica su firma y **avanza su
+> asistente automaticamente**: desde la version 10.01.0 Artifex no permite la instalacion
+> silenciosa (`/S`). Windows pide confirmacion de administrador una sola vez (el aviso de UAC
+> aparece como "Windows PowerShell"). Si la instalacion no termina en 5 minutos, se cancela y
+> se informa el error.
 
 ---
 
@@ -481,6 +488,8 @@ Navegador (usuario)      Odoo (VPS)                         LidaPrint (PC de la 
 
 ### Puesta en marcha
 
+Guia paso a paso para tecnicos (VPS, cada caja y errores comunes): [`docs/instalacion-modo-nube.md`](docs/instalacion-modo-nube.md).
+
 1. En Odoo (modulo `l10n_ve_lidoo_integration_api` 18.0.2.4.0 o posterior, ver
    [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md)), un **administrador** abre
    **Ajustes > API de integracion > LidaPrint > Equipos LidaPrint** (o **Facturacion >
@@ -597,7 +606,7 @@ de carga del servidor en [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md) (sec
 | "Odoo respondio algo que no es JSON" | La URL apunta a otro sitio o a una pagina de login/redireccion | Usar la URL base de Odoo con `https://` (sin `/odoo` ni `/web`) |
 | El monitor sale al arrancar: "Modo Nube sin URL de Odoo o sin token" | `config.json` editado a mano | Completar URL y token en el Configurator y Guardar |
 | El monitor sale al arrancar: "La URL debe empezar con https://" | `cloudUrl` con `http://` hacia un host publico (`config.json` viejo o editado a mano): el token viajaria en claro | Usar `https://`. `http://` solo se admite hacia la red local |
-| En Odoo un trabajo queda en **Imprimiendo** | La PC se apago o LidaPrint se reinicio a mitad de un lote, o no pudo confirmar el resultado | El cron de Odoo lo pasa a error a los **15 min** sin confirmacion (configurable, nunca menos de 12) y **nunca** lo devuelve a la cola: pudo haberse impreso. Revisar el papel y, si no salio, reimprimir desde la factura con **Imprimir Forma Libre**, que sale como **COPIA**. El boton **Reenviar el original** del trabajo solo existe cuando LidaPrint informo un error (no imprimio), y es para usuarios de facturacion, con confirmacion |
+| En Odoo un trabajo queda en **Imprimiendo** | La PC se apago o LidaPrint se reinicio a mitad de un lote, o no pudo confirmar el resultado | El cron de Odoo lo pasa a error a los **15 min** sin confirmacion (configurable, nunca menos de 12) y **nunca** lo devuelve a la cola: pudo haberse impreso. Revisar el papel y, si no salio, reimprimir desde la factura con el boton **Forma Libre**, que sale como **COPIA**. El boton **Reenviar el original** del trabajo solo existe cuando LidaPrint informo un error (no imprimio), y es para usuarios de facturacion, con confirmacion |
 
 ---
 

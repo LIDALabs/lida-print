@@ -5,9 +5,9 @@ Referencia del **modo Nube** de LidaPrint en el módulo
 `addons/l10n-ve-lidoo`): el agente de Windows consulta a Odoo por HTTPS y Odoo
 mantiene la cola de trabajos de impresión.
 
-> **Estado:** implementado en `l10n_ve_lidoo_integration_api` **18.0.2.4.0**,
-> rama `feat/lidaprint-nube` del repo de addons (cambios aún sin commit al
-> escribir esta guía). Probado con 253 tests de integración en verde más el
+> **Estado:** implementado en `l10n_ve_lidoo_integration_api` **18.0.2.4.0**
+> (mergeado en la rama `18.0` del repo de addons); **18.0.2.4.1** corrige el
+> aviso tras imprimir (distingue original y copias). Probado con 253 tests de integración en verde más el
 > carril puro (§11). Esta guía ya **no** es una propuesta: los bloques de
 > código son extractos recortados del código real o se sustituyeron por una
 > referencia al archivo. Si algo de aquí no coincide con el módulo, **manda el
@@ -56,7 +56,7 @@ los imprime y confirma el resultado.
 ```
  Usuario (navegador)        Odoo (VPS)                     LidaPrint (PC de la caja)
         |                       |                                    |
-        |  Imprimir Forma Libre |                                    |
+        |  botón Forma Libre    |                                    |
         |---------------------->|                                    |
         |                       | contador +1, render original       |
         |                       | contador +1, render copia          |
@@ -255,7 +255,7 @@ tráfico de consultas:
 El módulo **no añade ninguna consulta del lado del navegador**: ni
 temporizadores JS, ni suscripciones al bus, ni longpolling.
 `static/src/lidaprint_report_handler.js` sigue haciendo una sola llamada por
-clic. El botón «Imprimir Forma Libre» (y el despacho de reportes marcados)
+clic. El botón «Forma Libre» (y el despacho de reportes marcados)
 solo crea los trabajos en el servidor y devuelve una notificación; el estado
 posterior se consulta abriendo el trabajo o la factura, no en vivo.
 
@@ -781,7 +781,7 @@ Regla general: **toda reimpresión crea un trabajo nuevo** (id nuevo, estado
 trabajo existente: LidaPrint no volvería a imprimir un id que ya trató en la
 sesión y se perdería el historial.
 
-- **Desde la factura**: «Imprimir Forma Libre» es la reimpresión segura: el
+- **Desde la factura**: el botón «Forma Libre» es la reimpresión segura: el
   contador sube y los dos PDF salen como **COPIA**. El smart button «Trabajos
   LidaPrint» muestra qué pasó con cada impresión.
 - **«Reenviar el original»** (`action_l10n_ve_lidoo_reprint`): solo con
@@ -1130,7 +1130,7 @@ Red local)**
    confirmación, verificación en Python de grupo y compañía, y rechazo de
    equipos archivados. Crea un trabajo nuevo y deja nota en la factura. Los
    trabajos sin confirmación (`timeout`) o cancelados se reimprimen desde la
-   factura con «Imprimir Forma Libre», como COPIA (§8.2).
+   factura con el botón «Forma Libre», como COPIA (§8.2).
 3. **Estado «cancelado».** Se mantienen los cuatro estados; cancelar es
    `error` con `error_source = 'cancel'` (filtro «Cancelados» en la búsqueda).
 4. **Caducidad de pendientes.** Los `pending` **no caducan**: con el equipo
