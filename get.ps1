@@ -202,7 +202,8 @@ if (-not (Test-Path $configPath)) {
         downloadFolder = $defaultDownload; installPath = $installPath
         autoStart = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
-        webEnabled = $false; webPort = 8080; webApiKey = ""
+        mode = "local"; webEnabled = $false; webPort = 8080; webApiKey = ""
+        cloudUrl = ""; cloudToken = ""; cloudPollSeconds = 3
     } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
 } else {
     # Upgrade: refresh gsPath/installPath, preserve the rest.

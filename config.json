@@ -24,7 +24,11 @@
     "enableLogging": true,
     "usePattern": true,
     "invoicePattern": "^(F|ND|NC)-\\d{8}\\.pdf$",
+    "mode": "local",
     "webEnabled": false,
     "webPort": 8080,
-    "webApiKey": ""
+    "webApiKey": "",
+    "cloudUrl": "",
+    "cloudToken": "",
+    "cloudPollSeconds": 3
 }
