@@ -215,9 +215,6 @@
     <t t-set="ff_min_h"
            t-value="116 if (o.reversed_entry_id or o.debit_origin_id) else 114"/>
 
-    <t t-set="ff_gap_h"
-           t-value="20 if (o.reversed_entry_id or o.debit_origin_id) else 35"/>
-
     <t t-set="ff_is_factura"
            t-value="not (o.reversed_entry_id or o.debit_origin_id)"/>
 
@@ -238,6 +235,10 @@
 
     <t t-set="ff_four_items"
            t-value="len(ff_product_lines) == 4 and not ff_special_layout"/>
+
+    <!-- Espacio descripcion-totales: 35mm factura, 20mm NC, 25mm NC con 4 items -->
+    <t t-set="ff_gap_h"
+           t-value="25 if ((o.reversed_entry_id or o.debit_origin_id) and len(ff_product_lines) == 4) else (20 if (o.reversed_entry_id or o.debit_origin_id) else 35)"/>
 
     <!-- Sin usar operador % para evitar RPC_ERROR -->
     <!-- Formato minimo Digitel: en layout especial el canvas nunca mide menos
@@ -602,7 +603,7 @@
           </div>
 
           <!-- Espacio en blanco de separacion entre descripcion y totales:
-               35mm en factura, 20mm en nota de credito (y debito) -->
+               35mm en factura, 20mm en NC (25mm en NC con 4 items) -->
           <div t-att-style="'height: ' + str(ff_gap_h) + 'mm !important;'">&#160;</div>
 
           <!-- TOTALES -->
