@@ -1,14 +1,16 @@
 # LidaPrint
 
-Sistema de impresion automatica de facturas Odoo para Windows. Vigila una carpeta, imprime cada PDF con Ghostscript y elimina el archivo. Puede operar de forma autonoma (por patron de nombre) o controlado por Odoo via HTTP.
+Sistema de impresion automatica de facturas Odoo para Windows. Imprime cada PDF con Ghostscript (o ESC/POS crudo) y elimina el archivo. Tres modos: **Local** (vigila Descargas y filtra por patron de nombre), **Red local** (Odoo envia los PDF a esta PC por HTTP) y **Nube** (LidaPrint consulta a Odoo por HTTPS; sirve con Odoo en un VPS).
 
-Este es el **unico documento del proyecto**: cubre **uso**, **configuracion** y **funcionamiento interno**.
+Este es el **documento principal del proyecto**: cubre **uso**, **configuracion** y **funcionamiento interno** de LidaPrint. El lado de Odoo del modo Nube (modulo `l10n_ve_lidoo_integration_api` 18.0.2.4.0 o superior; se recomienda 18.0.2.4.1) esta documentado en [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md).
 
 ## Estructura del proyecto
 
 ```
 lida-print/
-├── README.md                ← Este archivo (documentacion completa)
+├── README.md                ← Este archivo (documentacion principal)
+├── docs/
+│   └── odoo-modo-nube.md    ← Modo Nube en el modulo de Odoo (contrato, cola, seguridad fiscal)
 ├── get.ps1                  ← Script de instalacion/actualizacion web (curl / irm)
 ├── build/
 │   └── Update-DriverHashes.ps1  ← Recalcula hashes SHA-256 de drivers en drivers.json
@@ -18,7 +20,8 @@ lida-print/
 │   ├── epson-m188d/         ← Driver APD para EPSON M188D
 │   ├── canon-lbp6030/       ← Instalador para Canon LBP6030/6030B/6030w
 │   └── ...
-├── LidaPrint.ps1            ← Monitor + servidor HTTP
+├── tests/                   ← Pruebas Pester (`Invoke-Pester ./tests`)
+├── LidaPrint.ps1            ← Monitor + servidor HTTP + cliente del modo Nube
 ├── Configurator.ps1         ← GUI de configuracion
 ├── LidaPrint.bat            ← Abre el Configurator sin dejar consola abierta
 ├── LidaPrint.vbs            ← Igual, con cero parpadeo (para doble clic)
@@ -43,14 +46,15 @@ lida-print/
 5. [Configuracion (Configurator)](#configuracion-configurator)
 6. [Referencia de config.json](#referencia-de-configjson)
 7. [Modos de operacion](#modos-de-operacion)
-8. [API HTTP](#api-http)
-9. [Patrones de nombre](#patrones-de-nombre)
-10. [Motor de impresion (Ghostscript)](#motor-de-impresion-ghostscript)
-11. [Logs](#logs)
-12. [Drivers de impresora](#drivers-de-impresora)
-13. [Como funciona internamente](#como-funciona-internamente)
-14. [Solucion de problemas](#solucion-de-problemas)
-15. [Desinstalar](#desinstalar)
+8. [Modo Nube (Odoo en VPS)](#modo-nube-odoo-en-vps)
+9. [API HTTP](#api-http)
+10. [Patrones de nombre](#patrones-de-nombre)
+11. [Motor de impresion (Ghostscript)](#motor-de-impresion-ghostscript)
+12. [Logs](#logs)
+13. [Drivers de impresora](#drivers-de-impresora)
+14. [Como funciona internamente](#como-funciona-internamente)
+15. [Solucion de problemas](#solucion-de-problemas)
+16. [Desinstalar](#desinstalar)
 
 ---
 
@@ -58,10 +62,11 @@ lida-print/
 
 Una vez instalado, LidaPrint corre en segundo plano (Task Scheduler) y:
 
-1. Monitorea la carpeta de Descargas cada 1 segundo.
-2. Detecta PDFs nuevos (por patron de nombre o por cola de impresion de la API).
-3. Los imprime con Ghostscript usando la configuracion guardada.
-4. Elimina el archivo tras imprimirlo.
+1. Recibe los PDF segun el modo: monitorea la carpeta de Descargas cada 1 segundo
+   (Local y Red local) o consulta a Odoo por HTTPS si hay trabajos pendientes (Nube).
+2. Decide que imprimir (patron de nombre, cola de la API o cola de trabajos de Odoo).
+3. Los imprime con Ghostscript (o ESC/POS crudo) usando la configuracion guardada.
+4. Elimina el archivo tras imprimirlo (en Nube, ademas, confirma el resultado a Odoo).
 
 Todo sin intervencion del usuario.
 
@@ -74,6 +79,13 @@ Todo sin intervencion del usuario.
 - Ghostscript (el instalador lo instala automaticamente)
 - Impresora configurada en Windows
 - **No requiere Administrador** (Ghostscript puede pedir UAC una vez, si no esta instalado)
+
+> **Ghostscript:** si no esta instalado, el instalador de LidaPrint descarga GPL Ghostscript
+> (licencia AGPL) desde el repositorio oficial de Artifex, verifica su firma y **avanza su
+> asistente automaticamente**: desde la version 10.01.0 Artifex no permite la instalacion
+> silenciosa (`/S`). Windows pide confirmacion de administrador una sola vez (el aviso de UAC
+> aparece como "Windows PowerShell"). Si la instalacion no termina en 5 minutos, se cancela y
+> se informa el error.
 
 ---
 
@@ -129,31 +141,65 @@ Get-ScheduledTask   -TaskName "LidaPrint"    # ver estado
 3. LidaPrint la detecta en la cola, la imprime y la borra.
 4. Odoo puede enviar `POST /skip` para archivos que NO deben imprimirse.
 
+### Modo Nube (Odoo en VPS)
+
+1. El usuario pulsa **Forma Libre** en Odoo: Odoo crea los trabajos de impresion en su cola.
+2. LidaPrint, que consulta a Odoo cada pocos segundos, los toma, descarga cada PDF y lo imprime.
+3. LidaPrint confirma a Odoo si se imprimio o fallo. Ver [Modo Nube](#modo-nube-odoo-en-vps).
+
 ---
 
 ## Configuracion (Configurator)
 
-Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro.
+Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscuro organizada en
+**5 pestanas por tarea**. En pantalla queda a lo sumo una linea de ayuda por seccion: la
+explicacion de cada campo esta en su **tooltip** (pasar el mouse por encima).
 
-### Pestana 1: Impresion
+| Pestana | Para que | Antes estaba en |
+|---------|----------|-----------------|
+| **Conexion** | Como llegan los PDF: modo Local, Red local o Nube | Monitoreo, Sistema (ejemplos) |
+| **Impresora** | Impresora, copias, orientacion, DPI, papel, margenes, escala | Impresion, Papel |
+| **Forma continua / Ticketera** | Papel tractor y ticketeras ESC/POS con su calibracion | Forma Continua, Calibracion |
+| **Avanzado** | Motor Ghostscript, conversor DPI/pixeles, auto-inicio y logs | Calidad, Sistema |
+| **Drivers y formatos** | Instalar drivers y descargar formatos de factura | Drivers, Formatos |
+
+### Pestana 1: Conexion
+
+Arriba, el selector de **modo de operacion** (ver [Modos de operacion](#modos-de-operacion)).
+Debajo se muestra **solo** el panel del modo elegido:
+
+| Modo | Se muestra |
+|------|------------|
+| Local (por nombre de archivo) | Carpeta de descargas + filtro por nombre |
+| Red local (Odoo envia a esta PC) | Carpeta de descargas + puerto, API Key y URL para Odoo |
+| Nube (Odoo en VPS) | URL de Odoo, token, intervalo de consulta y **Probar conexion** |
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
-| Impresora | Impresora fisica de Windows | Primera disponible |
-| Copias | Copias por documento (1-10) | 2 |
+| Carpeta | Carpeta de descargas (boton **...** para elegirla, **Abrir** la abre en el Explorador). La usan Local y Red local | `...\Downloads` |
+| Patron de nombre | Regex de validacion | `^(F\|ND\|NC)-\d{8}\.pdf$` |
+| Usar patron | Filtro por regex. Solo en modo Local: en Red local y Nube se desactiva y desmarca, y al volver a Local recupera el valor que tenia | activado |
+| Puerto | Puerto HTTP del modo Red local. Debajo se muestra la URL a usar **en Odoo** (con la IP de esta PC) | 8080 |
+| API Key | Clave de autenticacion (boton **Mostrar/Ocultar**). **Obligatoria** en modo Red local | (vacio) |
+| URL de Odoo | Direccion **base** de Odoo, ej. `https://cliente.example.com`: esquema, dominio y, si hace falta, puerto, **sin `/odoo` ni `/web`**. Si se pega con una ruta (copiada del navegador), **Probar conexion** y **Guardar** la quitan y avisan. Debe ser `https://`; `http://` solo se admite hacia la red local (`localhost`, nombres `.local`, IP privadas, link-local o CGNAT, IPv6 `::1`, `fc00::/7` o `fe80::/10`), con advertencia | (vacio) |
+| Token | Token del equipo, generado en Odoo por un **administrador**: **Ajustes > API de integracion > LidaPrint > Equipos LidaPrint** (el boton se ve con cualquier destino) o **Facturacion > Configuracion > Equipos LidaPrint**; abrir el equipo y pulsar **Generar token**. Se muestra una sola vez y tiene 43 caracteres: si no, al probar o guardar se avisa (sin bloquear) por si se copio a medias. Enmascarado (boton **Mostrar/Ocultar**) | (vacio) |
+| Consultar cada (s) | Intervalo inicial entre consultas (1-300). Odoo puede indicar otro con `next_poll` y ese manda | 3 |
+| Probar conexion | Llama a `GET /ping` con la URL y el token escritos (sin guardar). Muestra el equipo y la compania, o el error: 401 (equipo archivado o token revocado, o token mal copiado), 404/400 (URL incorrecta o base de datos no resuelta, ver [Solucion de problemas (Nube)](#solucion-de-problemas-nube)), sin conexion | — |
+
+### Pestana 2: Impresora
+
+| Campo | Descripcion | Default |
+|-------|-------------|---------|
+| Impresora | Impresora fisica de Windows (**Refrescar** relee la lista) | Primera disponible |
+| Copias | Copias por documento (1-10). Con Odoo en Red local o Nube, usar 1 | 2 |
 | Orientacion | `portrait` / `landscape` | portrait |
-| Escala (%) | Porcentaje del tamano original (10-200) | 100 |
 | DPI | Resolucion de impresion: presets (203 matriciales, 300 laser, etc.) **o valor escrito a mano** (72-1200) | 300 |
-| DPI del driver | Muestra el DPI por defecto que reporta el driver de la impresora seleccionada (Epson, Bixolon, Canon, etc.); boton **Usar este DPI** lo aplica de un clic | auto |
-
-### Pestana 2: Papel
-
-| Campo | Descripcion | Default |
-|-------|-------------|---------|
-| Paper Size | A4, Letter, Legal, Tabloid, A5, Continuo, Custom | A4 |
-| Tamano personalizado | Habilita ancho/alto manual; al marcarlo el Paper Size pasa a `Custom` automaticamente (y viceversa) | desactivado |
-| Ancho / Alto | En mm (50-2000) | 210 / 297 |
-| Margenes | Superior/Inferior/Izq/Der en mm — aplicados por **Ghostscript** | 0 |
+| DPI del driver | Al lado del DPI se muestra el que reporta el driver de la impresora seleccionada; **Usar este DPI** lo aplica de un clic | auto |
+| Tamano | A4, Letter, Legal, Tabloid, A5, Continuo, Custom | A4 |
+| Tamano personalizado | Habilita ancho/alto manual; al marcarlo el tamano pasa a `Custom` automaticamente (y viceversa) | desactivado |
+| Ancho / Alto (mm) | En mm (50-2000) | 210 / 297 |
+| Margenes | Superior/Inferior/Izquierdo/Derecho en mm — aplicados por **Ghostscript** | 0 |
+| Escala (%) | Porcentaje del tamano original (10-200) | 100 |
 
 > **Nota sobre margenes:** cada margen **empuja** el contenido en su direccion, sin
 > escalarlo: izquierdo lo mueve a la derecha, derecho a la izquierda, superior hacia
@@ -161,55 +207,17 @@ Se abre desde `LidaPrint.bat` o ejecutando `Configurator.ps1`. GUI con tema oscu
 > neto de 15mm a la derecha). Si el contenido queda fuera del papel, se recorta — para
 > achicarlo usa **Escala (%)**. El desplazamiento superior de forma continua empuja hacia abajo.
 
-### Pestana 3: Forma Continua
+### Pestana 3: Forma continua / Ticketera
 
-Para impresoras matriciales con papel tractor.
-
-| Campo | Descripcion | Default |
-|-------|-------------|---------|
-| Activar modo | Usa dimensiones de forma continua | desactivado |
-| Largo del formulario | Alto en mm (50-5000) | 279 |
-| Desplazamiento superior | Offset en mm | 0 |
-| Interlineado | mm entre lineas (4.23 = 6 LPI) | 4.23 |
-
-### Pestana 4: Calidad
-
-El apartado que controla **como se renderiza** el PDF antes de llegar a la impresora.
+**Forma continua** — para impresoras matriciales con papel tractor:
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
-| Suavizado maximo | Renderiza texto y graficos como imagen con antialiasing | desactivado |
-| Ghostscript | Ruta al ejecutable (`gswin64c.exe`), con **Detectar** automatico | auto-detectado |
-| Conversor DPI/pixeles | mm + DPI -> pixeles, y pixeles + DPI -> mm (bidireccional, en vivo) | 210mm @ 203dpi |
+| Activar modo forma continua | Usa dimensiones de forma continua | desactivado |
+| Largo (mm) | Alto del formulario en mm (50-5000) | 279 |
+| Desplaz. sup. (mm) | Desplazamiento superior (offset) en mm | 0 |
 
-**Cuando usar Ghostscript:** si el PDF se ve perfecto en pantalla pero **imprime feo**
-(letras deformadas, fuentes sustituidas, texto serruchado), el problema suele ser como el
-driver interpreta las fuentes del PDF. Ghostscript lo evita: **rasteriza la pagina al DPI
-exacto configurado** (pestana Impresion) y la envia ya renderizada como mapa de bits via el
-driver de Windows (device `mswinpr2`). El driver ya no interpreta nada: solo pinta puntos.
-
-**El conversor DPI/pixeles:** las impresoras de forma continua trabajan en pixeles a una
-densidad fija (203 DPI = 8 puntos/mm es el estandar en matriciales y termicas). El conversor
-resuelve la cuenta en ambos sentidos:
-
-- `pixeles = mm / 25.4 * DPI`  (ej: 210mm a 203dpi = 1678 px)
-- `mm = pixeles / DPI * 25.4`  (ej: 1678 px a 203dpi = 210mm)
-
-Util para calcular el `Largo del formulario` (pestana Forma Continua) cuando el fabricante
-especifica el area imprimible en pixeles.
-
-### Pestana 5: Monitoreo
-
-| Campo | Descripcion | Default |
-|-------|-------------|---------|
-| Descargas | Carpeta a vigilar (boton **Abrir** la abre en el Explorador) | `...\Downloads` |
-| Patron factura | Regex de validacion | `^(F\|ND\|NC)-\d{8}\.pdf$` |
-| Usar patron | Filtro por regex (se **desactiva** al activar la API) | activado |
-| Activar API web | Modo controlado por Odoo | desactivado |
-| Puerto | Puerto HTTP (muestra la URL al activar) | 8080 |
-| API Key | Clave de autenticacion (boton **Mostrar/Ocultar**). Obligatoria si la API esta activa | (vacio) |
-
-### Pestana: Calibracion (ESC/POS)
+#### Ticketera ESC/POS y calibracion
 
 Para ticketeras **9-agujas o termicas** cuyo driver **no acepta impresion grafica GDI**
 por el puerto disponible (caso tipico: EPSON TM-U220 conectada por un adaptador
@@ -225,9 +233,10 @@ acepta por ese adaptador.
 | DPI horizontal | Densidad de puntos horizontal (`puntos / mm x 25.4`) | 158.75 |
 | DPI vertical | Densidad vertical de la banda de 8 puntos (ajusta la proporcion) | 72 |
 | Densidad | Modo `ESC *`: `0` simple (8 puntos), `1` doble (24 puntos) | 1 |
-| Interlineado | Avance de papel entre bandas via `ESC 3 n` (unidad 1/144" en TM-U220); ajustado para que las bandas queden contiguas sin franjas blancas ni solape | 16 |
-| Umbral B/N | Corte de luminancia (0-255) para binarizar la imagen antes de mandarla: mas bajo = mas negro | 170 |
-| Suavizado | Antialiasing al rasterizar con Ghostscript (`-dTextAlphaBits=4`): texto mas legible | activado |
+| Interlineado (n) | Avance de papel entre bandas via `ESC 3 n` (unidad 1/144" en TM-U220); ajustado para que las bandas queden contiguas sin franjas blancas ni solape | 16 |
+| Umbral negro | Corte de luminancia (0-255) para binarizar la imagen antes de mandarla | 170 |
+| Separacion extra (mm) | Avance extra de papel al final de cada ticket ESC/POS (`linePitch`). 0 = sin separacion extra | 4.23 |
+| Antialiasing | Suavizado al rasterizar con Ghostscript (`-dTextAlphaBits=4`): texto mas legible | activado |
 
 **Boton "Imprimir barras de calibracion":** imprime dos barras negras de ancho conocido
 (200 y 400 puntos). Se miden en mm para deducir los valores:
@@ -254,23 +263,59 @@ acepta por ese adaptador.
 > `REPORTE ODOO 18 CORRECTO` para el formato completo corregido.
 
 > Con ESC/POS, el reporte de Odoo debe estar disenado al tamano del papel (no A4): el
-> paperformat de Odoo, la pestana **Papel** de LidaPrint y el papel fisico deben coincidir
-> para que la salida sea 1:1 sin deformacion. El ancho del contenido no puede superar el
-> **Ancho imprimible** del cabezal.
+> paperformat de Odoo, el papel de la pestana **Impresora** de LidaPrint y el papel fisico
+> deben coincidir para que la salida sea 1:1 sin deformacion. El ancho del contenido no
+> puede superar el **Ancho imprimible** del cabezal.
 
-### Pestana: Sistema
+### Pestana 4: Avanzado
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
+| Ghostscript | Ruta al ejecutable (`gswin64c.exe`), con **...** y **Detectar** automatico | auto-detectado |
+| Suavizado maximo | Renderiza texto y graficos como imagen con antialiasing | desactivado |
+| Conversor DPI/pixeles | mm + DPI -> pixeles, y pixeles + DPI -> mm (bidireccional, en vivo) | 210mm @ 203dpi |
 | Auto-iniciar con Windows | Crea/elimina la tarea programada | activado |
 | Generar logs | Escribe en `logs/PrintLog_yyyy-MM.txt` | activado |
 | Ver Log | Abre el log mas reciente en el Bloc de notas | — |
 
-Botones inferiores: **Probar Impresion** (envia un PDF de prueba), **Guardar** (valida y persiste), **Cancelar**.
+**Cuando usar Ghostscript:** si el PDF se ve perfecto en pantalla pero **imprime feo**
+(letras deformadas, fuentes sustituidas, texto serruchado), el problema suele ser como el
+driver interpreta las fuentes del PDF. Ghostscript lo evita: **rasteriza la pagina al DPI
+exacto configurado** (pestana Impresora) y la envia ya renderizada como mapa de bits via el
+driver de Windows (device `mswinpr2`). El driver ya no interpreta nada: solo pinta puntos.
 
-Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de descargas existente,
-ruta de Ghostscript valida, patron regex correcto,
-API Key presente si la API esta activa, y advierte si el puerto es < 1024.
+**El conversor DPI/pixeles:** las impresoras de forma continua trabajan en pixeles a una
+densidad fija (203 DPI = 8 puntos/mm es el estandar en matriciales y termicas). El conversor
+resuelve la cuenta en ambos sentidos:
+
+- `pixeles = mm / 25.4 * DPI`  (ej: 210mm a 203dpi = 1678 px)
+- `mm = pixeles / DPI * 25.4`  (ej: 1678 px a 203dpi = 210mm)
+
+Util para calcular el `Largo` de forma continua (pestana Forma continua / Ticketera) cuando
+el fabricante especifica el area imprimible en pixeles.
+
+### Pestana 5: Drivers y formatos
+
+Dos listas lado a lado que se cargan del catalogo de LidaPrint al entrar a la pestana:
+**Drivers de impresora** (boton **Instalar driver seleccionado**, ver
+[Drivers de impresora](#drivers-de-impresora)) y **Formatos de factura** (boton
+**Descargar...**, guarda la plantilla XML para importarla en Odoo).
+
+### Botones inferiores
+
+A la izquierda las pruebas, a la derecha Cancelar / Guardar:
+
+- **Probar impresion**: envia un PDF de prueba con Ghostscript a la impresora elegida.
+- **Probar monitor**: en Local deja una factura de prueba en la carpeta vigilada (el monitor
+  deberia imprimirla y borrarla). En Red local y Nube solo verifica que el monitor este
+  corriendo y explica como probar de punta a punta: imprimir una factura desde Odoo (en Red
+  local tambien **Probar conexion** de Odoo, o `curl.exe -X POST http://localhost:PUERTO/print/file`).
+- **Cancelar** cierra sin guardar; **Guardar** valida y persiste.
+
+Al **Guardar**, el Configurator valida: impresora seleccionada, carpeta de descargas existente
+(salvo en modo Nube), ruta de Ghostscript valida, patron regex correcto, API Key presente en
+modo Red local (y advierte si el puerto es < 1024), y en modo Nube una URL `https://` (o
+`http://` a localhost/red local, con advertencia) y un token no vacio.
 
 Ademas, al guardar **repara la tarea programada** si apunta a una ruta vieja: la re-registra
 apuntando a la ubicacion actual de los scripts. Esto resuelve el caso "movi/borre la carpeta
@@ -307,9 +352,13 @@ y dejo de imprimir".
     "enableLogging":   true,
     "usePattern":      true,
     "invoicePattern":  "^(F|ND|NC)-\\d{8}\\.pdf$",
+    "mode":            "local",
     "webEnabled":      false,
     "webPort":         8080,
     "webApiKey":       "",
+    "cloudUrl":        "",
+    "cloudToken":      "",
+    "cloudPollSeconds": 3,
     "escposEnabled":     false,
     "escposWidthMm":     64,
     "escposHdpi":        158.75,
@@ -335,18 +384,22 @@ y dejo de imprimir".
 | `continuousForm` | bool | Modo papel continuo |
 | `formLength` | int | Largo del formulario en mm |
 | `topOffset` | int | Desplazamiento superior en mm (forma continua, motor Ghostscript) |
-| `linePitch` | decimal | Informativo — no aplicable a PDFs (es un concepto de impresoras de linea) |
+| `linePitch` | decimal | Separacion extra en mm al final de cada ticket ESC/POS (pestana Forma continua / Ticketera). La via Ghostscript no la usa |
 | `gsPath` | string | Ruta a Ghostscript (`gswin64c.exe`). Si esta vacia o quedo obsoleta, **se re-resuelve sola** en runtime |
 | `renderAsImage` | bool | Suavizado maximo de texto/graficos al rasterizar |
-| `downloadFolder` | string | Carpeta monitoreada. Vacia = Descargas del usuario actual |
+| `downloadFolder` | string | Carpeta monitoreada (modos Local y Red local; no se usa en Nube). Vacia = Descargas del usuario actual |
 | `installPath` | string | Informativo. En runtime los scripts se auto-ubican con su propia ruta |
 | `autoStart` | bool | Si debe existir la tarea programada |
 | `enableLogging` | bool | Habilita el log |
 | `usePattern` | bool | Filtra por regex (solo modo Local) |
 | `invoicePattern` | string | Regex de validacion de nombres |
-| `webEnabled` | bool | Habilita el servidor HTTP |
+| `mode` | string | Modo de operacion: `local`, `api` (Red local) o `cloud` (Nube). Si falta o es invalido, se deriva de `webEnabled` |
+| `webEnabled` | bool | Habilita el servidor HTTP. Se sigue escribiendo, coherente con `mode` (`true` solo si `mode = api`), para lectores viejos |
 | `webPort` | int | Puerto HTTP |
-| `webApiKey` | string | Clave de autenticacion. **Obligatoria** si `webEnabled = true` (sin ella el listener no arranca) |
+| `webApiKey` | string | Clave de autenticacion. **Obligatoria** en modo `api` (sin ella el listener no arranca) |
+| `cloudUrl` | string | URL base de Odoo para el modo Nube (`https://...`): solo esquema, dominio y puerto, sin `/odoo` ni `/web` (el Configurator y el monitor quitan cualquier ruta) |
+| `cloudToken` | string | Token del equipo generado en Odoo. **Obligatorio** en modo Nube: sin URL o sin token el monitor no arranca. `config.json` queda con acceso restringido al usuario |
+| `cloudPollSeconds` | int | Intervalo inicial de consulta en segundos (1-300). Odoo lo ajusta con `next_poll` |
 | `escposEnabled` | bool | Imprime por la via RAW ESC/POS (rasteriza el PDF y manda `ESC *`) en vez de GDI/Ghostscript. Para ticketeras cuyo driver no acepta grafica GDI por el puerto disponible |
 | `escposWidthMm` | decimal | Ancho imprimible del cabezal en mm (barra de calibracion que llena el papel) |
 | `escposHdpi` | decimal | DPI horizontal medido: `puntos / (mm / 25.4)` |
@@ -364,30 +417,206 @@ Configurator, se aplican solos desde el bloque `calibration` de `drivers.json` (
 
 ## Modos de operacion
 
-### Modo Local (`webEnabled = false`)
+El modo se guarda en `mode` (`"local"`, `"api"` o `"cloud"`) y se elige en la pestana **Conexion** del Configurator.
+
+### Modo Local (`mode = "local"`)
 
 Autonomo. Depende de `usePattern`:
 
 - **`usePattern = true`**: solo imprime archivos cuyo nombre coincide con `invoicePattern`.
 - **`usePattern = false`**: imprime cualquier PDF que aparezca.
 
-### Modo API (`webEnabled = true`)
+### Modo Red local / API (`mode = "api"`)
 
-LidaPrint deja de imprimir automaticamente y espera instrucciones de Odoo:
+LidaPrint deja de imprimir automaticamente y espera instrucciones de Odoo (el servidor de Odoo
+debe poder llegar a esta PC por la red):
 
 - Solo imprime archivos que esten en la `printQueue`.
 - Odoo agrega archivos via `POST /print` y los excluye via `POST /skip`.
 - El patron de nombres **no se usa** (la UI desactiva el checkbox automaticamente).
 
+### Modo Nube (`mode = "cloud"`)
+
+LidaPrint consulta a Odoo por HTTPS (conexion saliente) y descarga los trabajos pendientes de
+su equipo. No usa la carpeta de descargas, ni el patron, ni el listener HTTP. Sirve con Odoo
+en un VPS. Detalle en [Modo Nube](#modo-nube-odoo-en-vps).
+
+### Compatibilidad `mode` / `webEnabled`
+
+Las configuraciones anteriores no tienen `mode`: se deriva de `webEnabled` (`true` -> `api`,
+`false` -> `local`). Si `mode` trae un valor desconocido tambien se deriva asi. Al guardar, el
+Configurator escribe ambas claves, con `webEnabled = (mode == "api")`, para que versiones
+viejas de LidaPrint sigan leyendo el archivo correctamente.
+
+---
+
+## Modo Nube (Odoo en VPS)
+
+### Por que existe
+
+El modo Red local necesita que el **servidor** de Odoo llegue a la PC de Windows por la
+red. Con Odoo en un VPS eso no pasa: la PC esta detras del router (NAT) y el VPS no puede
+abrirle conexiones. En modo Nube se invierte el sentido, como en una IoT Box: **LidaPrint
+sale a Odoo por HTTPS** y le pregunta si hay trabajos; Odoo guarda una cola de trabajos de
+impresion por equipo. No hay que abrir puertos, ni reglas de firewall, ni `urlacl`.
+
+```
+Navegador (usuario)      Odoo (VPS)                         LidaPrint (PC de la caja)
+     |                       |                                      |
+     |-- clic Forma Libre -->| crea 2 trabajos (pending):           |
+     |<-- "Enviado a Caja 1" |   original + copia SIN DERECHO...    |
+     |                       |<------------- POST /poll ------------|  cada ~3 s
+     |                       |  reclama hasta 10 (pending->printing)|
+     |                       |--- 200 {"jobs":[{"id":51,...},    -->|
+     |                       |    {"id":52,...}],"next_poll":3}     |
+     |                       |<------------- GET /job/51/pdf -------|
+     |                       |--------------- PDF ----------------->|  imprime, borra
+     |                       |<------ POST /job/51/ack {"done"} ----|  (printing->done)
+     |                       |          (igual con el 52)           |
+```
+
+### Quien consulta a Odoo (y quien no)
+
+- **Solo el agente LidaPrint consulta**, y solo cuando su `config.json` tiene
+  `mode = "cloud"` con `cloudUrl` y `cloudToken` definidos.
+- Las PC **sin LidaPrint**, las PC con LidaPrint en modo **Local** o **Red local**, y
+  **todos los navegadores / clientes web de Odoo** generan **cero** trafico de consultas.
+- El modulo de Odoo **no agrega consultas del lado del navegador** (ni temporizadores JS,
+  ni bus/longpolling): el boton **Forma Libre** solo crea los trabajos en el servidor.
+- La carga del servidor escala con el **numero de equipos Nube registrados y activos**, no
+  con el numero de usuarios ni de PC.
+
+### Puesta en marcha
+
+Guia paso a paso para tecnicos (VPS, cada caja y errores comunes): [`docs/instalacion-modo-nube.md`](docs/instalacion-modo-nube.md).
+
+1. En Odoo (modulo `l10n_ve_lidoo_integration_api` 18.0.2.4.0 o posterior, ver
+   [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md)), un **administrador** abre
+   **Ajustes > API de integracion > LidaPrint > Equipos LidaPrint** (o **Facturacion >
+   Configuracion > Equipos LidaPrint**), crea el equipo (ej. "Caja 1") y pulsa **Generar
+   token**. El token se muestra **una sola vez**. El boton se ve con cualquier destino de
+   impresion: conviene crear los equipos y copiar los tokens **antes** de pasar Odoo a Nube.
+2. En el Configurator, pestana **Conexion**: elegir **Nube (Odoo en VPS)**, pegar la URL base
+   de Odoo (`https://...`, sin `/odoo` ni `/web`) y el token, pulsar **Probar conexion** (debe
+   mostrar el equipo y la compania) y **Guardar**. El monitor se reinicia y empieza a consultar.
+3. En la pestana **Impresora** dejar **Copias = 1**: Odoo ya envia original y copia como
+   trabajos separados.
+4. En Odoo, **Ajustes > API de integracion > LidaPrint**: **Destino de impresion = Nube** y el
+   equipo por defecto de la compania (cada usuario puede elegir otro en sus preferencias,
+   **Imprimir en**).
+
+### Contrato HTTP
+
+Base: `{cloudUrl}/lidaprint/v1`. Toda peticion lleva `Authorization: Bearer <cloudToken>` y
+`User-Agent: LidaPrint/<version>`. Los cuerpos van en JSON (`application/json; charset=utf-8`).
+
+| Metodo | Ruta | Cuerpo | Respuesta |
+|--------|------|--------|-----------|
+| GET | `/ping` | — | 200 `{"ok":true,"device":"Caja 1","company":"ACME","next_poll":3}`; **401** si el token es invalido o fue revocado. **No reclama trabajos** (lo usa **Probar conexion**) |
+| POST | `/poll` | `{"hostname":"<COMPUTERNAME>","version":"<ver>","printer":"<config.printer>"}` | **Siempre 200** `{"jobs":[{"id":51,"filename":"F-00001234.pdf","size":12345}],"next_poll":3}` (`jobs` puede venir vacio). Del lado del servidor reclama atomicamente hasta 10 trabajos pendientes del equipo (pending -> printing) |
+| GET | `/job/<id>/pdf` | — | 200 `application/pdf` binario; 404 si el trabajo no es de este equipo o ya no esta en `printing` (pendiente, impreso o con error). LidaPrint toma el 404 como definitivo y confirma `error` |
+| POST | `/job/<id>/ack` | `{"status":"done"}` o `{"status":"error","message":"..."}` | 200 `{"ok":true}`. Idempotente: un ack tardio o repetido tambien es 200. 404 solo si el trabajo no es del equipo; 400 si el `status` no es valido |
+
+Errores: el **401** responde `{"ok":false,"error":"unauthorized"}` en las cuatro rutas (token
+invalido o revocado, o equipo archivado), sin efectos en Odoo; el 404 y el 400 del modulo,
+`{"status":"error","message":"..."}`. Si el servidor tiene varias bases y no puede elegir una
+sin sesion (sin `dbfilter`), Odoo responde un **HTML 404** a cualquier `/lidaprint/v1/*`.
+
+### Comportamiento del agente
+
+- En modo Nube el monitor **no** inicia el listener HTTP ni vigila la carpeta de descargas.
+- Al arrancar normaliza `cloudUrl` con la misma funcion que el Configurator (`Get-CloudUrlCheck`):
+  solo esquema, dominio y puerto; si trae una ruta (`/odoo`, `/web`...) la quita y deja un WARN
+  en el log. Con `http://` hacia un host publico el ciclo Nube **no arranca** (ERROR en el log):
+  el token viajaria en claro por internet. `http://` hacia la red local funciona, con un WARN.
+- Habilita **TLS 1.2** si el sistema no negocia por su cuenta (con `SystemDefault` no toca nada,
+  asi sigue disponible TLS 1.3), mantiene **keep-alive** y desactiva `Expect: 100-continue`. Timeouts:
+  15 s para ping/poll/ack, 60 s para descargar el PDF.
+- Por cada trabajo: descarga el PDF a `temp\job-<id>-<nombre>` (nombre saneado con
+  `[IO.Path]::GetFileName`), rechaza > 50 MB o sin los magic bytes `%PDF-` (mismas reglas que
+  `/print/file`), lo imprime por la **misma via** que los otros modos (Ghostscript o
+  ESC/POS), lo borra y confirma `done`. Si la impresion falla, confirma `error` con el mensaje.
+- **Nunca imprime dos veces el mismo id** en una sesion. Por eso una reimpresion en Odoo crea
+  siempre un trabajo nuevo.
+- Si un ack falla por red queda pendiente (guardado en `temp\cloud-pending-acks.json`, asi
+  sobrevive a un reinicio del monitor) y se reintenta antes del poll como mucho cada 30 s, **sin bloquearlo
+  nunca**; se descarta con un WARN a los 60 minutos. Si la descarga falla por red
+  se reintenta hasta 5 veces (es seguro: aun no se imprimio); despues confirma `error`. Cada
+  reintento de descarga deja un WARN en el log y no cuenta como perdida de conexion.
+- **Caducidad:** un trabajo que espero en la cola local **10 minutos** o mas sin poder
+  imprimirse (Odoo caido o sin red) **ya no se imprime**: se confirma `error` ("Trabajo
+  caducado..."). Mientras tanto Odoo pudo marcarlo como error y el operador reimprimirlo;
+  imprimirlo tarde duplicaria la factura fiscal. Se comprueba antes de descargar el PDF y otra
+  vez justo antes de imprimirlo. La espera se mide con un reloj monotono (`Stopwatch`) y con la
+  hora de Windows, y manda la mayor: atrasar la hora no alarga la ventana, y una suspension de
+  la PC tampoco. La cola local vive solo en memoria: si el monitor se reinicia, esos trabajos
+  quedan en "Imprimiendo" en Odoo, el poll ya no los devuelve y el cron de Odoo los pasa a error.
+- **Lotes largos:** un poll trae hasta 10 trabajos y el lote se atiende entero antes del
+  siguiente poll. Como Odoo da por desconectado un equipo sin contacto en 60 s, entre dos
+  trabajos del lote, si pasaron mas de 30 s desde el ultimo contacto, LidaPrint hace un
+  `GET /ping` (no reclama nada y actualiza la ultima conexion). Si falla, sigue con el lote.
+- Intervalo: el `next_poll` que manda Odoo, acotado a [1, 300] s; si no viene, `cloudPollSeconds`.
+- Sin red, timeout o error del servidor: backoff exponencial 2, 4, 8... hasta 60 s.
+- **404 o 400 en el poll** (URL incorrecta o base de datos no resuelta, ver
+  [Solucion de problemas (Nube)](#solucion-de-problemas-nube)): un ERROR en el log al cambiar de
+  estado, una sola vez, y el mismo backoff hasta 60 s.
+- **401** (equipo archivado o token revocado en Odoo, o token mal copiado): espera **60 s**; tras
+  **3 rechazos seguidos** alarga la espera a **300 s**, asi un equipo dado de baja no martilla
+  al servidor (como mucho ~288 peticiones/dia). El contador vuelve a cero con la primera
+  respuesta correcta.
+- Log: no registra cada consulta. Registra los trabajos (recibido, impreso, fallido) y solo
+  los **cambios** de estado de la conexion:
+
+```
+[2026-09-14 08:00:03] [OK] Conectado a Odoo (https://cliente.example.com/lidaprint/v1)
+[2026-09-14 10:15:30] [INFO] Nube: trabajo #51 recibido (F-00001234.pdf, 48211 bytes)
+[2026-09-14 10:15:33] [OK] Nube #51: Impreso (Ghostscript 300dpi, 210x297mm): job-51-F-00001234.pdf -> Canon LBP6030
+[2026-09-14 12:40:10] [WARN] Conexion con Odoo perdida: The operation has timed out
+[2026-09-14 12:41:02] [OK] Conexion con Odoo restablecida
+```
+
+- Con `mode = "cloud"` pero sin `cloudUrl` o sin `cloudToken`, o con `http://` hacia un host
+  publico, el monitor registra un ERROR y **no arranca** (el Configurator no deja guardar esos
+  casos).
+
+### Costo del polling
+
+Una consulta sin trabajos, con keep-alive, ocupa unos **0,5-1 KB** (cabeceras con el token +
+JSON corto). Con ~0,8 KB por consulta y **por PC en modo Nube**:
+
+| Intervalo | Consultas/dia | Trafico/dia |
+|-----------|---------------|-------------|
+| 1 s | 86 400 | ~69 MB |
+| 3 s (default) | 28 800 | **~23 MB** |
+| 5 s | 17 280 | ~14 MB |
+
+Los PDF se suman aparte (decenas de KB por factura). Odoo puede alargar el intervalo fuera
+de horario con `next_poll` (ej. 30 s), lo que baja el total a la mitad o menos. Estimaciones
+de carga del servidor en [`docs/odoo-modo-nube.md`](docs/odoo-modo-nube.md) (seccion Rendimiento).
+
+### Solucion de problemas (Nube)
+
+| Sintoma | Causa probable | Solucion |
+|---------|----------------|----------|
+| **Probar conexion** o el log dicen **401** | Equipo archivado o token revocado en Odoo, o token mal copiado (el Configurator avisa si no tiene 43 caracteres) | Generar un token nuevo en Odoo, pegarlo en la pestana Conexion y Guardar. Mientras tanto el monitor reintenta cada 60 s y luego cada 300 s |
+| "Sin conexion con Odoo" / **timeout** | Sin internet, URL mal escrita, DNS, o un proxy/antivirus que bloquea la salida | Abrir la URL de Odoo en el navegador de esa PC. `curl.exe -m 15 https://cliente.example.com/lidaprint/v1/ping -H "Authorization: Bearer TOKEN"` debe devolver `{"ok":true,...}` |
+| Error de **TLS / SSL** ("canal seguro", "trust relationship") | Certificado vencido o no valido en el servidor, fecha/hora del PC incorrecta, o inspeccion HTTPS del antivirus | LidaPrint ya habilita TLS 1.2. Corregir la hora de Windows, renovar el certificado (Let's Encrypt) o excluir el dominio de la inspeccion HTTPS |
+| **404 o 400** en Probar conexion, o en el log "URL incorrecta o base de datos no resuelta" | La peticion no llega al modulo: (1) la URL no es la del dominio de Odoo o traia una ruta (`/odoo`, `/web`; LidaPrint ya la quita); (2) el servidor tiene **varias bases** y sin `dbfilter` no sabe cual usar: Odoo responde un HTML 404 a `/lidaprint/v1/*`; (3) el modulo de Odoo no esta actualizado a 18.0.2.4.0 | URL base, sin `/odoo` ni `/web`. En el servidor, una sola base por instancia o `dbfilter` por dominio (`dbfilter = ^%d$` o `^%h$`; ver el README del modulo). Prueba: `curl.exe -H "Authorization: Bearer x" https://cliente.example.com/lidaprint/v1/ping` debe responder **401 JSON**; un HTML 404 es que la base no se resolvio |
+| **404/400** ("URL incorrecta o base de datos no resuelta") con la URL correcta | El servidor de Odoo tiene **varias bases** y el `dbfilter` no elige una para `/lidaprint/v1/*` | `dbfilter` por dominio (`dbfilter = ^%d$`), o en nginx `location /lidaprint/ { proxy_set_header X-Odoo-dbfilter "^<db>$"; ... }` (requiere el modulo server-wide `dbfilter_from_header` y `proxy_mode = True`). Detalle en [docs/odoo-modo-nube.md](docs/odoo-modo-nube.md), seccion 6.3 |
+| "Odoo respondio algo que no es JSON" | La URL apunta a otro sitio o a una pagina de login/redireccion | Usar la URL base de Odoo con `https://` (sin `/odoo` ni `/web`) |
+| El monitor sale al arrancar: "Modo Nube sin URL de Odoo o sin token" | `config.json` editado a mano | Completar URL y token en el Configurator y Guardar |
+| El monitor sale al arrancar: "La URL debe empezar con https://" | `cloudUrl` con `http://` hacia un host publico (`config.json` viejo o editado a mano): el token viajaria en claro | Usar `https://`. `http://` solo se admite hacia la red local |
+| En Odoo un trabajo queda en **Imprimiendo** | La PC se apago o LidaPrint se reinicio a mitad de un lote, o no pudo confirmar el resultado | El cron de Odoo lo pasa a error a los **15 min** sin confirmacion (configurable, nunca menos de 12) y **nunca** lo devuelve a la cola: pudo haberse impreso. Revisar el papel y, si no salio, reimprimir desde la factura con el boton **Forma Libre**, que sale como **COPIA**. El boton **Reenviar el original** del trabajo solo existe cuando LidaPrint informo un error (no imprimio), y es para usuarios de facturacion, con confirmacion |
+
 ---
 
 ## API HTTP
 
-Se activa con `webEnabled = true`. El listener registra el prefijo **raiz** (`http://+:PUERTO/`) y enruta todas las rutas en codigo.
+Se activa con el modo Red local (`mode = "api"`, que escribe `webEnabled = true`). El listener registra el prefijo **raiz** (`http://+:PUERTO/`) y enruta todas las rutas en codigo.
 
 ### Autenticacion
 
-La **API Key es obligatoria** cuando `webEnabled = true`. Si la API esta activada pero
+La **API Key es obligatoria** en modo Red local (`mode = "api"`). Si la API esta activada pero
 `webApiKey` esta vacia, el listener **no se inicia** (se registra un error en el log) — asi se
 evita exponer un endpoint de subida+impresion sin autenticacion. El Configurator tambien
 bloquea el guardado en ese caso.
@@ -481,27 +710,42 @@ usuario. `http://localhost:PUERTO` solo funciona si Odoo y LidaPrint corren en
 la **misma** maquina. Si Odoo corre en Linux y LidaPrint en un Windows aparte
 (fisico o VM), la URL configurada en Odoo debe ser la IP de esa maquina Windows
 vista desde el servidor de Odoo, por ejemplo `http://192.168.122.32:8081`.
-La URL que muestra el Configurator (`http://localhost:...`) es valida solo
-dentro del propio Windows.
+El Configurator muestra la URL con la IP de la PC (`En Odoo: http://IP:PUERTO`);
+`localhost` es valida solo dentro del propio Windows. Si Odoo corre en un VPS
+(fuera de la red de la PC), usar el [Modo Nube](#modo-nube-odoo-en-vps).
 
 ### Integracion con Odoo (modulo l10n_ve_lidoo_integration_api)
 
 El modulo de la localizacion venezolana trae la integracion lista en
-**Ajustes > API de integracion > LidaPrint**:
+**Ajustes > API de integracion > LidaPrint**. El selector **Destino de impresion** decide
+adonde va la Forma Libre (original y copia **SIN DERECHO A CREDITO FISCAL**) y los reportes
+marcados:
+
+| Destino | Que hace |
+|---------|----------|
+| Navegador (descargar PDF) | Descarga el PDF como siempre, sin LidaPrint |
+| Red local (API) | Odoo envia los PDF a esta PC por `POST /print/file` (esta seccion) |
+| Nube | Odoo deja los PDF en la cola del equipo y LidaPrint los recoge por HTTPS (ver [Modo Nube](#modo-nube-odoo-en-vps)) |
+
+El interruptor anterior **Imprimir Forma Libre con LidaPrint** ya no esta en la pantalla: en
+una instalacion que lo tenia encendido el destino pasa a **Red local**, y con el interruptor
+apagado a **Navegador**, sin migracion.
+
+Con **Red local** se completan:
 
 | Campo | Valor |
 |-------|-------|
-| Imprimir Forma Libre con LidaPrint | Interruptor. Encendido, el boton **Forma Libre** envia a LidaPrint dos PDF por documento: el original y la copia **SIN DERECHO A CREDITO FISCAL**. Apagado, descarga el PDF en el navegador como siempre |
-| URL de LidaPrint | IP del Windows donde corre LidaPrint (ver advertencia de `localhost` arriba). Ej: `http://192.168.122.32:8081` |
-| API Key de LidaPrint | La misma `webApiKey` del `config.json` (pestana Monitoreo del Configurator) |
+| URL | IP del Windows donde corre LidaPrint (ver advertencia de `localhost` arriba). Ej: `http://192.168.122.32:8081` |
+| API Key | La misma `webApiKey` del `config.json` (pestana Conexion del Configurator, modo Red local) |
 | Probar conexion | Hace `GET /print/status` y notifica si LidaPrint responde |
 
 Reglas de comportamiento del modulo:
 
 - Solo aplica a facturas, notas de credito y notas de debito de cliente
   publicadas con numero de control.
-- Con el interruptor encendido y sin conexion, la impresion se **bloquea** con
-  un error explicito (no imprime a medias en silencio).
+- En Red local, sin conexion con LidaPrint la impresion se **bloquea** con
+  un error explicito (no imprime a medias en silencio). En Nube no se bloquea:
+  los documentos quedan en cola y se imprimen cuando el equipo se conecta.
 - En el `config.json` de LidaPrint dejar **`copies: 1`**: Odoo ya envia
   original y copia como documentos separados; con `copies: 2` saldria 2x2.
 - Los PDF viajan por `POST /print/file` (subida directa), asi que **no** hace
@@ -511,7 +755,7 @@ Reglas de comportamiento del modulo:
 
 Checklist completo para que la API responda desde fuera del Windows. Los tres
 pasos de PowerShell van **como Administrador** y usan el puerto configurado en
-la pestana Monitoreo (ejemplos con 8081):
+la pestana Conexion (modo Red local; ejemplos con 8081):
 
 ```powershell
 # 1. Perfil de red Privado (el perfil Publico descarta todo el trafico entrante)
@@ -602,10 +846,10 @@ gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumC
 |--------|-------------|
 | `pdfwrite` + `-dDEVICEWIDTH/HEIGHTPOINTS -dFIXEDMEDIA -dFitPage` | Re-formatea el PDF al tamano configurado (landscape intercambia ancho/alto) |
 | `-sDEVICE=mswinpr2` | Imprime via el driver de Windows con la pagina YA rasterizada |
-| `-rN` | DPI de rasterizado (pestana Impresion: 203, 300, etc.) |
+| `-rN` | DPI de rasterizado (pestana Impresora: 203, 300, etc.) |
 | `-dNumCopies=N` | Copias |
 | `-c "<< /BeginPage ... >>"` | Margenes (desplazamiento puro por lado), topOffset y escala del usuario |
-| `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox en la pestana Calidad) |
+| `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox en la pestana Avanzado) |
 
 > **Nota fisica:** el tamano configurado define el area que ocupa el CONTENIDO. La hoja
 > fisica es la que este cargada en la impresora: un contenido de 50x100mm sobre una hoja
@@ -613,7 +857,7 @@ gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumC
 
 Todas las funcionalidades de configuracion (margenes, orientacion, paper size, escala,
 DPI, forma continua, desplazamiento superior) estan soportadas por este motor. La unica
-excepcion es `linePitch` (interlineado), que no aplica a PDFs.
+excepcion es `linePitch`, que solo usa la via ESC/POS (separacion extra entre tickets).
 
 ---
 
@@ -634,7 +878,7 @@ Niveles: `INFO`, `WARN`, `ERROR`, `OK`.
 ## Drivers de impresora
 
 LidaPrint incluye drivers preempaquetados para modelos comunes. Se instalan desde la
-pestana **Drivers** del Configurator — no hace falta buscarlos en la web del fabricante.
+pestana **Drivers y formatos** del Configurator — no hace falta buscarlos en la web del fabricante.
 
 ### Drivers incluidos
 
@@ -647,7 +891,7 @@ pestana **Drivers** del Configurator — no hace falta buscarlos en la web del f
 ### Instalar un driver desde el Configurator
 
 1. Abrir el Configurator (`LidaPrint.exe`).
-2. Ir a la pestana **Drivers**.
+2. Ir a la pestana **Drivers y formatos**.
 3. Seleccionar el modelo de la lista.
 4. Hacer clic en **Instalar** y seguir las instrucciones del instalador.
 
@@ -655,7 +899,7 @@ Al terminar la instalacion, LidaPrint deja la impresora **utilizable de inmediat
 segun el bloque `postInstall` del driver (ver abajo) reasigna el puerto, apaga el
 bidireccional y limpia el estado "sin conexion"; y segun el bloque `calibration`
 escribe en `config.json` el **DPI, ancho imprimible e interlineado ESC/POS medidos
-para ese modelo** — sin pasar por la pestana Calibracion. Instalar el driver en una PC
+para ese modelo** — sin calibrar a mano en la pestana Forma continua / Ticketera. Instalar el driver en una PC
 nueva deja todo listo para imprimir 1:1.
 
 ### Reparacion automatica post-instalacion (`postInstall`)
@@ -684,10 +928,10 @@ el modelo y el puerto USB; a partir de ahi, todo lo demas es automatico.
 ### Calibracion automatica al instalar (`calibration`)
 
 Cada modelo de ticketera tiene un DPI, ancho imprimible e interlineado propios que hay
-que medir una sola vez sobre el hardware (ver seccion **Calibracion (ESC/POS)**). Para
+que medir una sola vez sobre el hardware (ver **Ticketera ESC/POS y calibracion** en la seccion del Configurator). Para
 que no haya que repetir esa medicion en cada PC, esos valores se guardan en el bloque
 opcional `calibration` del driver en `drivers.json`. Al instalar el driver, el
-Configurator los escribe en `config.json` y refleja en la pestana Calibracion.
+Configurator los escribe en `config.json` y los refleja en la pestana Forma continua / Ticketera.
 
 | Clave | Descripcion | TM-U220 |
 |-------|-------------|---------|
@@ -754,7 +998,7 @@ LidaPrint.exe (monitor)
     |
     +-- [Resolucion de rutas]  Re-resuelve Ghostscript en runtime
     |
-    +-- [Runspace HTTP]  Start-WebListener  (solo si webEnabled + API Key)
+    +-- [Runspace HTTP]  Start-WebListener  (solo modo api + API Key)
     |       GET  /             → dashboard HTML
     |       GET  /print/status → estado JSON
     |       POST /print        → printQueue.Add
@@ -762,7 +1006,15 @@ LidaPrint.exe (monitor)
     |       POST /clear        → vacia ambas colas
     |       POST /print/file   → guarda PDF (max 50MB, nombre saneado) + encola
     |
-    +-- [Loop principal]  Polling cada 1s
+    +-- [Modo Nube]  Invoke-CloudLoop  (solo mode=cloud + URL + token; sin listener ni carpeta)
+    |       POST /poll          → trabajos reclamados + next_poll
+    |       en cola local > 10 min → caducado: ack error, NO se imprime
+    |       GET  /job/<id>/pdf  → temp\job-<id>-<nombre>  (max 50MB, magic %PDF-)
+    |       Invoke-Print        → Ghostscript / ESC/POS  →  borra el temporal
+    |       POST /job/<id>/ack  → done / error  (acks fallidos: se reintentan antes del poll)
+    |       espera next_poll [1-300]s | red caida: backoff hasta 60s | 401: 60s, 300s tras 3
+    |
+    +-- [Loop principal]  Polling cada 1s  (modos local y api)
             |
             +-- Modo API:   solo procesa archivos en printQueue
             +-- Modo Local: usePattern=true → filtra por regex
@@ -810,6 +1062,14 @@ recibe listener, carpeta de descargas, API key y ambas colas via `AddArgument` y
 | `Remove-Invoice` | Elimina el archivo con hasta 5 reintentos |
 | `Process-InvoiceFile` | Espera que el tamano se estabilice, imprime y elimina |
 | `Start-WebListener` / `Stop-WebListener` | Ciclo de vida del servidor HTTP |
+| `Get-LidaPrintMode` | Modo efectivo (`local`/`api`/`cloud`); si falta `mode` lo deriva de `webEnabled`. Copia identica en `Configurator.ps1` (en el exe el monitor y la GUI corren en ramas distintas) |
+| `Invoke-Print` | Elige la via de impresion: ESC/POS crudo o Ghostscript |
+| `Invoke-CloudLoop` | Ciclo del modo Nube: acks pendientes, poll, trabajos, espera/backoff y log de cambios de estado |
+| `Invoke-CloudBatch` / `Invoke-CloudKeepAlive` | Atiende en orden los trabajos de un poll; entre dos trabajos, `GET /ping` si pasaron mas de 30 s sin contacto con Odoo |
+| `Invoke-CloudJob` | Descarga, valida, imprime (via `Invoke-Print`) y confirma un trabajo; nunca reimprime un id |
+| `Complete-ExpiredCloudJob` | Caducidad local (10 min, reloj monotono y de pared) antes de descargar y antes de imprimir |
+| `Get-CloudUrlCheck` / `Test-CloudLocalHost` | Normalizan la URL de Odoo y deciden si se admite `http://` (solo red local). Copia identica en `Configurator.ps1`, verificada por `tests/Cloud.Tests.ps1` |
+| `Invoke-CloudRequest` | Peticion HTTPS a Odoo con `Authorization: Bearer` y `User-Agent`; adjunta el codigo HTTP al error |
 
 ### Deteccion de archivos estables
 
@@ -835,10 +1095,10 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 |----------|----------------|----------|
 | No imprime ninguna factura | Impresora apagada o en pausa | Verificar estado en Panel de control |
 | No imprime tras mover/borrar la carpeta descargada | Instalacion vieja apuntando a ruta muerta (ej: `C:\AutoPrintFacturas`) | Re-ejecutar el instalador (`irm .../get.ps1 \| iex`): migra la tarea a `%LOCALAPPDATA%\LidaPrint`. O abrir el Configurator y Guardar: repara la tarea |
-| **Imprime feo** (el PDF se ve bien en pantalla) | El driver interpreta mal las fuentes del PDF | Pestana **Calidad** -> motor **Ghostscript** + DPI de la impresora (203 en matriciales). Si persiste, activar "Suavizado maximo" |
-| Ghostscript no instalado o movido | winget/descarga fallo, UAC cancelado o ejecutable eliminado | Se auto-resuelve en runtime; si no, instalar desde ghostscript.com y usar **Detectar** en la pestana Calidad |
+| **Imprime feo** (el PDF se ve bien en pantalla) | El driver interpreta mal las fuentes del PDF | Pestana **Impresora** -> DPI de la impresora (203 en matriciales). Si persiste, pestana **Avanzado** -> "Suavizado maximo" |
+| Ghostscript no instalado o movido | winget/descarga fallo, UAC cancelado o ejecutable eliminado | Se auto-resuelve en runtime; si no, instalar desde ghostscript.com y usar **Detectar** en la pestana Avanzado |
 | El PDF no se elimina | Archivo bloqueado por otro proceso | LidaPrint reintenta 5 veces; si falla, se reintenta al reiniciar |
-| No detecta facturas (modo local) | Patron incorrecto o API activada | Revisar el regex o desactivar la API |
+| No detecta facturas (modo local) | Patron incorrecto u otro modo elegido | Revisar el regex, o elegir **Local** en la pestana Conexion |
 | API no responde | Puerto en uso o firewall | `netstat -an \| findstr 8080` y abrir el puerto |
 | Odoo dice "LidaPrint no respondio" con **timeout** | Firewall de Windows descartando trafico (perfil de red Publico o falta la regla), o la URL en Odoo apunta a `localhost` en vez de a la IP del Windows | Seguir el checklist de **Acceso desde otra maquina**; en Odoo usar `http://IP_DEL_WINDOWS:PUERTO` |
 | Odoo no conecta pero `curl.exe localhost` funciona dentro del Windows | El listener esta vivo pero el firewall bloquea el acceso externo | Perfil de red Privado + regla de firewall del puerto (pasos 1 y 2 del checklist) |
@@ -850,6 +1110,7 @@ Los archivos que dejan de existir en disco se limpian del hashtable en cada cicl
 | Aparece una ventana de consola al imprimir y cerrarla mata el monitor | Tarea vieja lanzada con `-WindowStyle Minimized` (la ventana existia, solo minimizada) | Reinstalar o **Guardar**: la tarea migra a `conhost --headless`, el monitor corre sin ventana alguna |
 | Monitor se cierra al iniciar | Error en `config.json` | Revisar el log: toda salida temprana escribe su motivo (impresora, motores, carpeta) |
 | La consola parpadea al arrancar | Se ejecuto el `.bat` directo | Usar `LidaPrint.vbs` para arranque silencioso |
+| Modo Nube: Odoo no imprime, 401, 404, timeouts o errores TLS | Equipo archivado o token revocado, URL con ruta o base de datos no resuelta, sin salida a internet, certificado | Ver [Solucion de problemas (Nube)](#solucion-de-problemas-nube) |
 
 ---
 

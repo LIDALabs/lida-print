@@ -111,9 +111,9 @@ try {
 }
 
 # --- 6. Ghostscript ---
-# Copied verbatim from Install.ps1:105-180 (Find-Gs, winget, verified download
-# of gs10031w64.exe with SHA256/Authenticode Artifex, silent install /S).
-# Change applied: removed all `pause` calls (get.ps1 runs via irm | iex).
+# Mirrors Install.ps1 section 3 (Find-Gs, winget, verified download of
+# gs10031w64.exe with SHA256/Authenticode Artifex, unattended install through
+# Invoke-GsSetup). Change applied: removed all `pause` calls (irm | iex).
 Write-Step "Verificando Ghostscript (motor de impresion)..."
 function Find-Gs {
     foreach ($base in @("$env:ProgramFiles\gs", "${env:ProgramFiles(x86)}\gs", "$env:LOCALAPPDATA\Programs\gs")) {
@@ -125,6 +125,76 @@ function Find-Gs {
     }
     return $null
 }
+
+# The GS installer (NSIS) ignores /S on purpose: since 10.01.0 Artifex builds
+# the AGPL installer with "SetSilent normal" at the top of .onInit, so the
+# wizard always shows (and waits forever when nobody sees the desktop, e.g.
+# a service or SSH). Instead of /S the installer runs normally and this
+# driver advances its wizard by posting WM_COMMAND for control ID 1 (Next /
+# I Agree / Install / Finish on every NSIS page) until it exits; message
+# boxes get No (7), else OK (1/2). Past $TimeoutSec it kills the installer
+# and returns 1460 (ERROR_TIMEOUT); otherwise the installer exit code.
+# Must run elevated: the installer requires admin and UIPI drops window
+# messages sent from a lower integrity level.
+$gsSetupDriver = {
+    param([string]$Installer, [int]$TimeoutSec)
+    if (-not ('LidaPrintGs.Win32' -as [type])) {
+        Add-Type -Namespace LidaPrintGs -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+[DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dlg, int id);
+[DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
+'@
+    }
+    $proc = Start-Process -FilePath $Installer -PassThru
+    $null = $proc.Handle   # keeps the handle so ExitCode is available later
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while (-not $proc.WaitForExit(700)) {
+        if ((Get-Date) -gt $deadline) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            return 1460
+        }
+        # [NullString]::Value: a plain $null would be passed as "" (title must be empty)
+        $h = [IntPtr]::Zero
+        while (($h = [LidaPrintGs.Win32]::FindWindowEx([IntPtr]::Zero, $h, '#32770', [NullString]::Value)) -ne [IntPtr]::Zero) {
+            $wpid = [uint32]0
+            [void][LidaPrintGs.Win32]::GetWindowThreadProcessId($h, [ref]$wpid)
+            if ($wpid -ne $proc.Id) { continue }
+            # Wizard (has the NSIS page area, ID 1018): button 1 only. Message box: 7, 1, 2.
+            $ids = if ([LidaPrintGs.Win32]::GetDlgItem($h, 1018) -ne [IntPtr]::Zero) { @(1) } else { @(7, 1, 2) }
+            foreach ($id in $ids) {
+                $btn = [LidaPrintGs.Win32]::GetDlgItem($h, $id)
+                if ($btn -ne [IntPtr]::Zero -and [LidaPrintGs.Win32]::IsWindowEnabled($btn)) {
+                    [void][LidaPrintGs.Win32]::PostMessage($h, 0x0111, [IntPtr]$id, $btn)   # WM_COMMAND
+                    break
+                }
+            }
+        }
+    }
+    return $proc.ExitCode
+}
+
+# Runs $gsSetupDriver elevated: in-process when already admin, otherwise in an
+# elevated powershell.exe (one UAC prompt, shown as Windows PowerShell). The
+# driver travels as -EncodedCommand, so no script lands on disk to be swapped.
+function Invoke-GsSetup {
+    param([Parameter(Mandatory)][string]$Installer, [int]$TimeoutSec = 300)
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        return (& $gsSetupDriver $Installer $TimeoutSec)
+    }
+    $cmd = "exit (& {" + $gsSetupDriver.ToString() + "} '" + $Installer.Replace("'", "''") + "' $TimeoutSec)"
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    $p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru `
+        -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $enc"
+    $null = $p.Handle
+    # The driver kills the installer at its own limit; this margin only covers
+    # the driver itself hanging (an elevated process cannot be killed from here).
+    if (-not $p.WaitForExit(($TimeoutSec + 60) * 1000)) { return 1460 }
+    return $p.ExitCode
+}
+
 $gsPath = Find-Gs
 
 if ($gsPath) {
@@ -170,8 +240,11 @@ if ($gsPath) {
             }
 
             if ($gsOk) {
-                Start-Process -FilePath $tempGs -ArgumentList "/S" -Wait
+                Write-Host "    Instalando GPL Ghostscript (licencia AGPL, ghostscript.com). Su asistente avanza solo, no lo cierres..."
+                $gsExit = Invoke-GsSetup -Installer $tempGs -TimeoutSec 300
                 Remove-Item $tempGs -Force -ErrorAction SilentlyContinue
+                if ($gsExit -eq 1460) { Write-Warn "El instalador de Ghostscript no termino en 5 minutos y fue cancelado." }
+                elseif ($gsExit -ne 0) { Write-Warn "El instalador de Ghostscript termino con codigo $gsExit." }
                 $gsPath = Find-Gs
             }
         } catch {
@@ -202,7 +275,8 @@ if (-not (Test-Path $configPath)) {
         downloadFolder = $defaultDownload; installPath = $installPath
         autoStart = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
-        webEnabled = $false; webPort = 8080; webApiKey = ""
+        mode = "local"; webEnabled = $false; webPort = 8080; webApiKey = ""
+        cloudUrl = ""; cloudToken = ""; cloudPollSeconds = 3
     } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
 } else {
     # Upgrade: refresh gsPath/installPath, preserve the rest.
