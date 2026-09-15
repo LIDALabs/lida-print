@@ -427,6 +427,10 @@
                 <t t-foreach="lines"
                    t-as="line">
 
+                  <!-- Descripcion sin el codigo [default_code] de product.template -->
+                  <t t-set="ff_line_name"
+                     t-value="(line.name or '').split(']', 1)[1].strip() if (line.name or '').strip().startswith('[') and ']' in (line.name or '').split('\n', 1)[0] else (line.name or '')"/>
+
                   <t t-if="base_vef">
 
                     <t t-set="current_subtotal"
@@ -458,7 +462,7 @@
                        name="account_invoice_line_accountable">
 
                       <td name="account_invoice_line_name">
-                        <span t-field="line.name"
+                        <span t-esc="ff_line_name"
                               t-options="{'widget': 'text'}"/>
 
                         <span t-if="line.tax_ids and all(tax.amount == 0.0 for tax in line.tax_ids)">
