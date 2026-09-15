@@ -159,6 +159,34 @@
       .ff-doc.ff-three-items .ff-total {
         font-size: 17pt !important;
       }
+
+      /* Factura Digitel: +1pt en todos los niveles (NC/ND sin cambios) */
+      .ff-doc.ff-factura .ff-titulo,
+      .ff-doc.ff-factura .ff-base,
+      .ff-doc.ff-factura .ff-items,
+      .ff-doc.ff-factura .ff-small,
+      .ff-doc.ff-factura .ff-total {
+        font-size: 19pt !important;
+      }
+
+      .ff-doc.ff-factura.ff-three-items .ff-titulo,
+      .ff-doc.ff-factura.ff-three-items .ff-base,
+      .ff-doc.ff-factura.ff-three-items .ff-items,
+      .ff-doc.ff-factura.ff-three-items .ff-small,
+      .ff-doc.ff-factura.ff-three-items .ff-total {
+        font-size: 18pt !important;
+      }
+
+      .ff-doc.ff-factura.ff-special-layout .ff-titulo {
+        font-size: 17pt !important;
+      }
+
+      .ff-doc.ff-factura.ff-special-layout .ff-base,
+      .ff-doc.ff-factura.ff-special-layout .ff-items,
+      .ff-doc.ff-factura.ff-special-layout .ff-small,
+      .ff-doc.ff-factura.ff-special-layout .ff-total {
+        font-size: 16pt !important;
+      }
     </style>
 
     <t t-set="d"
@@ -169,6 +197,9 @@
 
     <t t-set="ff_gap_h"
            t-value="20 if (o.reversed_entry_id or o.debit_origin_id) else 35"/>
+
+    <t t-set="ff_is_factura"
+           t-value="not (o.reversed_entry_id or o.debit_origin_id)"/>
 
     <!-- Validación automática -->
     <t t-set="ff_address_text"
@@ -197,7 +228,7 @@
            1mm !important;' if ff_special_layout else ('position: absolute !important; top: ' + str(ff_min_h) + 'mm !important; left: 0 !important; right:
            0 !important; width: 100% !important;')"/>
 
-    <div t-att-class="'ff-doc ff-special-layout' if ff_special_layout else 'ff-doc ff-three-items' if ff_three_items else 'ff-doc'">
+    <div t-att-class="('ff-doc ff-special-layout' if ff_special_layout else 'ff-doc ff-three-items' if ff_three_items else 'ff-doc') + (' ff-factura' if ff_is_factura else '')">
 
       <div class="row">
         <div class="col-12">
