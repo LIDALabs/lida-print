@@ -50,6 +50,9 @@
       .ff-base td,
       .ff-base th,
       .ff-base span,
+      .ff-items td,
+      .ff-items th,
+      .ff-items span,
       .ff-total td,
       .ff-total th,
       .ff-total span {
@@ -458,9 +461,16 @@
                 <t t-foreach="lines"
                    t-as="line">
 
-                  <!-- Descripcion sin el codigo [default_code] de product.template -->
+                  <!-- Descripcion sin codigos numericos [nnn] (default_code de product.template):
+                       quita TODOS los grupos [solo-digitos] en cualquier posicion;
+                       otro texto entre corchetes se conserva -->
+                  <t t-set="ff_code_parts"
+                     t-value="(line.name or '').split(']')"/>
                   <t t-set="ff_line_name"
-                     t-value="(line.name or '').split(']', 1)[1].strip() if (line.name or '').strip().startswith('[') and ']' in (line.name or '').split('\n', 1)[0] else (line.name or '')"/>
+                     t-value="''.join([(q.split('[', 1)[0] if ('[' in q and q.split('[', 1)[1].strip().isdigit()) else q + ']') for q in ff_code_parts[:-1]] + [ff_code_parts[-1]]).strip()"/>
+                  <!-- Cantidad corta ("1", no "1.00") para que "N x precio" entre en la columna -->
+                  <t t-set="ff_qty"
+                     t-value="str(int(line.quantity or 0)) if (line.quantity or 0) == int(line.quantity or 0) else str(line.quantity or 0)"/>
 
                   <t t-if="base_vef">
 
@@ -486,7 +496,7 @@
 
                   </t>
 
-                  <tr t-att-class="'bg-200 fw-bold o_line_section' if line.display_type == 'line_section' else 'fst-italic o_line_note' if
+                  <tr t-att-class="'bg-200 o_line_section' if line.display_type == 'line_section' else 'fst-italic o_line_note' if
                   line.display_type == 'line_note' else ''">
 
                     <t t-if="line.display_type == 'product'"
@@ -504,7 +514,7 @@
                       <td class="text-end"
                           t-attf-class="text-end {{ 'd-none d-md-table-cell' if report_type == 'html' else '' }}">
 
-                        <span t-field="line.quantity"/>
+                        <span t-esc="ff_qty"/>
                         <span> x </span>
 
                         <t t-if="base_vef">
@@ -557,7 +567,7 @@
 
                     <tr class="is-subtotal text-end ff-total">
                       <td colspan="99">
-                        <strong class="mr16">Subtotal</strong>
+                        <span class="mr16">Subtotal</span>
                         <span t-out="current_subtotal"
                               t-options="{&quot;widget&quot;: &quot;monetary&quot;, &quot;display_currency&quot;: o.currency_id}"/>
                       </td>
@@ -700,18 +710,14 @@
                       <tr>
                         <td class="text-end"
                             style="vertical-align: middle;">
-                          <strong>EXENTO</strong>
+                          EXENTO
                         </td>
 
                         <td class="text-end"
                             style="vertical-align: middle;">
-                          <strong>
-                            <span t-out="fmt_bs(exento_total)"
-                                  style="display: inline-block;"/>
-                          </strong>
-                          <strong>
-                            <span style="display: inline-block;">Bs.</span>
-                          </strong>
+                          <span t-out="fmt_bs(exento_total)"
+                                style="display: inline-block;"/>
+                          <span style="display: inline-block;">Bs.</span>
                         </td>
                       </tr>
 
@@ -726,18 +732,14 @@
                     <tr>
                       <td class="text-end"
                           style="vertical-align: middle;">
-                        <strong>Total</strong>
+                        Total
                       </td>
 
                       <td class="text-end"
                           style="vertical-align: middle;">
-                        <strong>
-                          <span t-out="fmt_bs(tax_totals.get('total_amount_currency', 0))"
-                                style="display: inline-block;"/>
-                        </strong>
-                        <strong>
-                          <span style="display: inline-block;">Bs.</span>
-                        </strong>
+                        <span t-out="fmt_bs(tax_totals.get('total_amount_currency', 0))"
+                              style="display: inline-block;"/>
+                        <span style="display: inline-block;">Bs.</span>
                       </td>
                     </tr>
 
