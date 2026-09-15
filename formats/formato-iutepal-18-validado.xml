@@ -131,9 +131,11 @@
         padding-bottom: 0 !important;
       }
 
+      /* Formato minimo Digitel: el alto minimo del canvas lo pone el
+         estilo dinamico (min-height = ff_min_h) para que los subtotales
+         queden siempre a la misma altura de pagina */
       .ff-doc.ff-special-layout .ff-canvas {
         height: auto !important;
-        min-height: 0 !important;
       }
 
       .ff-doc.ff-special-layout .ff-totals-abs {
@@ -181,9 +183,11 @@
            t-value="len(ff_product_lines) == 3 and not ff_special_layout"/>
 
     <!-- Sin usar operador % para evitar RPC_ERROR -->
+    <!-- Formato minimo Digitel: en layout especial el canvas nunca mide menos
+         de ff_min_h, asi los subtotales quedan siempre a la altura de pagina -->
     <t t-set="ff_canvas_style"
-           t-value="'position: relative !important; height: auto !important;' if ff_special_layout else ('position: relative !important; height: ' +
-           str(ff_min_h + 70) + 'mm !important;')"/>
+           t-value="'position: relative !important; height: auto !important; min-height: ' + str(ff_min_h) + 'mm !important;' if ff_special_layout else
+           ('position: relative !important; height: ' + str(ff_min_h + 70) + 'mm !important;')"/>
 
     <t t-set="ff_totals_style"
            t-value="'position: static !important; top: auto !important; left: auto !important; right: auto !important; width: 100% !important; margin-top:
