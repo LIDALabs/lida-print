@@ -476,12 +476,8 @@
                       <td class="text-end"
                           t-attf-class="text-end {{ 'd-none d-md-table-cell' if report_type == 'html' else '' }}">
 
-                        <t t-if="line.quantity &gt; 1.0">
-                          <span t-field="line.quantity"/>
-                          <span t-field="line.product_uom_id"
-                                groups="uom.group_uom"/>
-                          <span> x </span>
-                        </t>
+                        <span t-field="line.quantity"/>
+                        <span> x </span>
 
                         <t t-if="base_vef">
                           <span class="text-nowrap"
@@ -546,6 +542,9 @@
             </table>
 
           </div>
+
+          <!-- Espacio en blanco de separacion entre descripcion y totales -->
+          <div style="height: 5mm !important;">&#160;</div>
 
           <!-- TOTALES -->
           <div class="ff-totals-abs"
