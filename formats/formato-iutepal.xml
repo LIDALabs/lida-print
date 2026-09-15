@@ -213,9 +213,6 @@
               <table class="table table-sm table-borderless o_main_table ff-items" name="invoice_line_table">
                 <thead>
                   <tr class="border-bottom">
-                    <th name="th_code" class="text-start" t-if="o.company_id.l10n_ve_lidoo_show_product_code_free_form">
-                      <span>Código</span>
-                    </th>
                     <th name="th_description" class="text-start">
                       <span>Descripción</span>
                     </th>
@@ -242,9 +239,6 @@
                     </t>
                     <tr t-att-class="'bg-200 fw-bold o_line_section' if line.display_type == 'line_section' else 'fst-italic o_line_note' if line.display_type == 'line_note' else ''">
                       <t t-if="line.display_type == 'product'" name="account_invoice_line_accountable">
-                        <td t-if="o.company_id.l10n_ve_lidoo_show_product_code_free_form">
-                          <span t-field="line.product_id.default_code"/>
-                        </td>
                         <td name="account_invoice_line_name">
                           <span t-field="line.name" t-options="{'widget': 'text'}"/>
                           <span t-if="line.tax_ids and all(tax.amount == 0.0 for tax in line.tax_ids)">(E)</span>

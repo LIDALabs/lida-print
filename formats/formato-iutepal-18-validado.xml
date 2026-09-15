@@ -391,12 +391,6 @@
               <thead>
                 <tr class="border-bottom">
 
-                  <th name="th_code"
-                      class="text-start"
-                      t-if="o.company_id.l10n_ve_lidoo_show_product_code_free_form">
-                    <span>Código</span>
-                  </th>
-
                   <th name="th_description"
                       class="text-start">
                     <span>Descripción</span>
@@ -459,10 +453,6 @@
 
                     <t t-if="line.display_type == 'product'"
                        name="account_invoice_line_accountable">
-
-                      <td t-if="o.company_id.l10n_ve_lidoo_show_product_code_free_form">
-                        <span t-field="line.product_id.default_code"/>
-                      </td>
 
                       <td name="account_invoice_line_name">
                         <span t-field="line.name"
