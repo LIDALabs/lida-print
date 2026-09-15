@@ -180,13 +180,13 @@
         font-size: 19pt !important;
       }
 
-      /* 4 items: factura 17pt, NC 16.5pt */
+      /* 4 items: factura 17pt, NC 16pt */
       .ff-doc.ff-four-items .ff-titulo,
       .ff-doc.ff-four-items .ff-base,
       .ff-doc.ff-four-items .ff-items,
       .ff-doc.ff-four-items .ff-small,
       .ff-doc.ff-four-items .ff-total {
-        font-size: 16.5pt !important;
+        font-size: 16pt !important;
       }
 
       .ff-doc.ff-factura.ff-four-items .ff-titulo,
