@@ -167,6 +167,9 @@
     <t t-set="ff_min_h"
            t-value="116 if (o.reversed_entry_id or o.debit_origin_id) else 114"/>
 
+    <t t-set="ff_gap_h"
+           t-value="20 if (o.reversed_entry_id or o.debit_origin_id) else 35"/>
+
     <!-- Validación automática -->
     <t t-set="ff_address_text"
            t-value="(o.partner_id.street or '') + ' - ' + (o.partner_id.street2 or '') + ' - ' + (o.partner_id.state_id.name or '') + ' - ' +
@@ -533,8 +536,9 @@
 
           </div>
 
-          <!-- Espacio en blanco de separacion entre descripcion y totales -->
-          <div style="height: 5mm !important;">&#160;</div>
+          <!-- Espacio en blanco de separacion entre descripcion y totales:
+               35mm en factura, 20mm en nota de credito (y debito) -->
+          <div t-att-style="'height: ' + str(ff_gap_h) + 'mm !important;'">&#160;</div>
 
           <!-- TOTALES -->
           <div class="ff-totals-abs"
