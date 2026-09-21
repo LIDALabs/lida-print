@@ -241,6 +241,119 @@ if ($script:runMode -eq "cloud" -and $script:cloudUrlCheck.Error) {
     Start-Sleep 10; exit 1
 }
 
+# ===================== COLA DE WINDOWS =====================
+# LidaPrint no puede depender de una limpieza al iniciar: Windows carga el
+# Print Spooler antes de la sesion del usuario y puede reanudar un trabajo
+# pendiente mientras la pantalla de arranque aun esta visible. La impresora
+# configurada se deja permanentemente en modo DIRECT, que no conserva trabajos
+# del spooler entre reinicios. Se aplica tambien desde el Configurator y los
+# instaladores para que la primera activacion ocurra antes del proximo apagado.
+#
+# El atributo 0x2 es PRINTER_ATTRIBUTE_DIRECT y 0x1 es
+# PRINTER_ATTRIBUTE_QUEUED. PrintUIEntry es la misma operacion que la casilla
+# "Imprimir directamente en la impresora" de las propiedades de Windows.
+if (-not ("LidaPrinterNative" -as [type])) {
+Add-Type -Language CSharp -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class LidaPrinterNative {
+  [StructLayout(LayoutKind.Sequential)]
+  struct PRINTER_DEFAULTS { public IntPtr pDatatype; public IntPtr pDevMode; public uint DesiredAccess; }
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  struct PRINTER_INFO_2 {
+    public IntPtr pServerName; public IntPtr pPrinterName; public IntPtr pShareName;
+    public IntPtr pPortName; public IntPtr pDriverName; public IntPtr pComment;
+    public IntPtr pLocation; public IntPtr pDevMode; public IntPtr pSepFile;
+    public IntPtr pPrintProcessor; public IntPtr pDatatype; public IntPtr pParameters;
+    public IntPtr pSecurityDescriptor; public uint Attributes; public uint Priority;
+    public uint DefaultPriority; public uint StartTime; public uint UntilTime;
+    public uint Status; public uint cJobs; public uint AveragePPM;
+  }
+  [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool OpenPrinter(string name, out IntPtr h, ref PRINTER_DEFAULTS d);
+  [DllImport("winspool.drv", SetLastError=true)]
+  static extern bool GetPrinter(IntPtr h, uint level, IntPtr data, uint size, out uint needed);
+  [DllImport("winspool.drv", SetLastError=true)]
+  static extern bool SetPrinter(IntPtr h, uint level, IntPtr data, uint command);
+  [DllImport("winspool.drv", SetLastError=true)]
+  static extern bool ClosePrinter(IntPtr h);
+  public static string SetDirect(string name) {
+    IntPtr h=IntPtr.Zero, mem=IntPtr.Zero;
+    try {
+      var d = new PRINTER_DEFAULTS(); d.DesiredAccess = 4; // PRINTER_ACCESS_ADMINISTER
+      if(!OpenPrinter(name, out h, ref d)) return "OpenPrinter "+Marshal.GetLastWin32Error();
+      uint needed=0; GetPrinter(h,2,IntPtr.Zero,0,out needed);
+      if(needed == 0) return "GetPrinter size "+Marshal.GetLastWin32Error();
+      mem=Marshal.AllocHGlobal((int)needed);
+      if(!GetPrinter(h,2,mem,needed,out needed)) return "GetPrinter "+Marshal.GetLastWin32Error();
+      var info=(PRINTER_INFO_2)Marshal.PtrToStructure(mem,typeof(PRINTER_INFO_2));
+      info.Attributes = (info.Attributes | 0x2u) & ~0x1u;
+      Marshal.StructureToPtr(info,mem,false);
+      if(!SetPrinter(h,2,mem,0)) return "SetPrinter "+Marshal.GetLastWin32Error();
+      return "OK";
+    } finally {
+      if(mem != IntPtr.Zero) Marshal.FreeHGlobal(mem);
+      if(h != IntPtr.Zero) ClosePrinter(h);
+    }
+  }
+}
+"@
+}
+function Set-LidaPrinterDirectMode {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        $native = [LidaPrinterNative]::SetDirect($printer)
+        if ($native -ne "OK") {
+            & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct" 2>&1 | Out-Null
+        }
+        Start-Sleep -Milliseconds 150
+        $escaped = $printer -replace "'", "''"
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        $isDirect = $null -ne $p -and (($p.Attributes -band 0x2) -ne 0)
+        if ($isDirect) {
+            return @{ Success = $true; Message = "Impresion directa activada en '$printer'" }
+        }
+        return @{ Success = $false; Message = "Windows no pudo activar 'Imprimir directamente en la impresora' para '$printer' ($native). Acepta la confirmacion UAC al guardar en el Configurator y verifica que el controlador permita este modo." }
+    } catch {
+        return @{ Success = $false; Message = "No se pudo configurar impresion directa en '$printer': $($_.Exception.Message)" }
+    }
+}
+
+function Remove-LidaStalePrinterJobs {
+    # Solo elimina trabajos identificables como LidaPrint o Ghostscript. No
+    # vaciar toda la cola: el usuario puede tener trabajos de otra aplicacion.
+    param([Parameter(Mandatory)][string]$printer)
+    $removed = 0
+    try {
+        $jobs = @(Get-PrintJob -PrinterName $printer -ErrorAction Stop)
+        foreach ($job in $jobs) {
+            $doc = [string]$job.DocumentName
+            if (-not $doc) { $doc = [string]$job.Document }
+            if ($doc -match '^(?i:LidaPrint\b|Ghostscript (Output|document)\b)') {
+                try {
+                    Remove-PrintJob -PrinterName $printer -ID ([int]$job.Id) -ErrorAction Stop
+                    $removed++
+                } catch { }
+            }
+        }
+    } catch {
+        # PrintManagement puede no estar disponible en instalaciones antiguas.
+        # El modo DIRECT sigue siendo la proteccion principal.
+    }
+    return $removed
+}
+
+$script:printerDirectReady = $true
+if ($null -eq $config.directPrint -or [bool]$config.directPrint) {
+    # Quitar primero trabajos viejos que ya estaban en la cola; de lo contrario
+    # el cambio de atributo no cancela un trabajo que ya existe.
+    $removedJobs = Remove-LidaStalePrinterJobs ([string]$config.printer)
+    if ($removedJobs -gt 0) { Write-BootLog "Se cancelaron $removedJobs trabajo(s) anterior(es) de LidaPrint/Ghostscript en la cola de '$($config.printer)'" "WARN" }
+    $directResult = Set-LidaPrinterDirectMode ([string]$config.printer)
+    Write-BootLog $directResult.Message $(if ($directResult.Success) { "OK" } else { "ERROR" })
+    $script:printerDirectReady = $directResult.Success
+}
+
 # Directorio temporal PROPIO para los PDF intermedios de la pasada 1.
 # NO usar $env:TEMP: el Task Scheduler lo entrega en formato corto 8.3
 # (C:\Users\JOSEG~1\...) y ese alias puede no existir en el volumen,
@@ -323,6 +436,14 @@ function Get-PaperPoints {
     }
 }
 
+function ConvertTo-PostScriptString {
+    param([string]$value)
+    # DocumentName es texto de spooler, no contenido fiscal. Limitarlo a ASCII
+    # imprimible evita que el locale o una ruta Unicode rompan el -c de GS.
+    $s = [regex]::Replace([string]$value, '[^\x20-\x7E]', '_')
+    return $s.Replace('\', '\\').Replace('(', '\(').Replace(')', '\)')
+}
+
 function Invoke-PrintGhostscript {
     # Rasteriza el PDF al DPI configurado y lo envia via el driver de Windows
     # (device mswinpr2). Esto arregla los casos donde el PDF se ve bien en
@@ -394,6 +515,9 @@ function Invoke-PrintGhostscript {
     }
 
     $gsArgs += "-sOutputFile=%printer%$($config.printer)"
+    $docPsName = ConvertTo-PostScriptString ("LidaPrint: " + $fileName)
+    $gsArgs += "-c"
+    $gsArgs += "<< /UserSettings << /DocumentName ($docPsName) >> >> setpagedevice"
     if ($pageCmd) { $gsArgs += "-c"; $gsArgs += $pageCmd }
     $gsArgs += "-f"
     $gsArgs += $printSource
@@ -430,9 +554,9 @@ public class LidaRaw {
   [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h);
   [DllImport("winspool.drv",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h);
   [DllImport("winspool.drv",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h);
-  public static string Send(string p, byte[] d){ IntPtr h;
+  public static string Send(string p, byte[] d, string docName){ IntPtr h;
     if(!OpenPrinter(p,out h,IntPtr.Zero)) return "OpenPrinter FAIL "+Marshal.GetLastWin32Error();
-    var di=new DI(); di.n="LidaPrint ESCPOS"; di.t="RAW";
+    var di=new DI(); di.n=docName ?? "LidaPrint ESCPOS"; di.t="RAW";
     if(!StartDocPrinter(h,1,ref di)){ClosePrinter(h);return "StartDoc FAIL "+Marshal.GetLastWin32Error();}
     StartPagePrinter(h); int w; bool ok=WritePrinter(h,d,d.Length,out w);
     EndPagePrinter(h); EndDocPrinter(h); ClosePrinter(h);
@@ -593,7 +717,7 @@ function Invoke-PrintEscPos {
             if ($extraLf -gt 0) { 1..$extraLf | ForEach-Object { $out.Add($LF) } }
         }
 
-        $res = [LidaRaw]::Send($config.printer, $out.ToArray())
+        $res = [LidaRaw]::Send($config.printer, $out.ToArray(), ("LidaPrint: " + $fileName))
         if ($res -eq "OK") {
             return @{ Success = $true; Message = "Impreso (ESC/POS ${w}x${h} puntos, ${widthMm}mm): $fileName -> $($config.printer)" }
         }
@@ -605,6 +729,9 @@ function Invoke-PrintEscPos {
 
 function Invoke-Print {
     param([string]$filePath)
+    if (-not $script:printerDirectReady) {
+        return @{ Success = $false; Message = "Windows no tiene activa la impresion directa para '$($config.printer)'" }
+    }
     if ($config.escposEnabled) {
         return Invoke-PrintEscPos $filePath
     }
@@ -1541,6 +1668,7 @@ Write-Log "Patron:       $($config.invoicePattern) (activo: $($config.usePattern
 Write-Log "Motor:        Ghostscript ($gsResolved)"
 Write-Log "Web HTTP:     $($config.webEnabled) (puerto $($config.webPort))"
 Write-Log "Modo:         $($script:runMode)"
+Write-Log "Impresion dir: $($config.directPrint -ne $false) (sin cola persistente de Windows)"
 if ($script:runMode -eq "cloud") {
     Write-Log "Nube:         $($script:cloudBase) (cada $($script:cloudDefaultPoll)s salvo que Odoo indique otro intervalo)"
 }
@@ -1621,6 +1749,10 @@ try {
                 }
 
                 if ($shouldProcess) {
+                    if (-not $script:printerDirectReady) {
+                        Write-Log "Impresion detenida: Windows no tiene activa la impresion directa para '$($config.printer)'. Acepta la confirmacion UAC al guardar en el Configurator y verifica que el controlador permita este modo." "ERROR"
+                        continue
+                    }
                     $seenFiles[$fp] = $true
                     Process-InvoiceFile $fp
                 } elseif ($script:runMode -ne "api") {

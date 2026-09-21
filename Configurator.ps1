@@ -36,7 +36,7 @@ function Load-Config {
         continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
         gsPath = ""; renderAsImage = $false
         downloadFolder = ""; installPath = ""
-        autoStart = $true; enableLogging = $true
+        autoStart = $true; directPrint = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
         webEnabled = $false; webPort = 8080; webApiKey = ""
         escposEnabled = $false; escposWidthMm = 64; escposHdpi = 158.75; escposVdpi = 72; escposDensity = 1
@@ -94,6 +94,70 @@ function Save-Config {
 }
 
 $config = Load-Config
+
+# ===================== COLA DE WINDOWS =====================
+# La tarea de LidaPrint arranca al iniciar sesion, pero Windows carga el
+# Print Spooler antes y puede reanudar un trabajo viejo durante la pantalla de
+# arranque. Activar el atributo DIRECT en la impresora evita que esos trabajos
+# queden persistentes entre reinicios. Se configura aqui, al guardar, antes de
+# que el monitor vuelva a arrancar.
+function Set-LidaPrinterDirectMode {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        $escaped = $printer -replace "'", "''"
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) {
+            return @{ Success = $true; Message = "Impresion directa ya estaba activa en '$printer'" }
+        }
+
+        # La configuracion del atributo de la cola requiere privilegios de
+        # administrador en muchas instalaciones. Intentar primero en el
+        # proceso actual para no mostrar UAC innecesariamente.
+        & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 150
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) {
+            return @{ Success = $true; Message = "Impresion directa activada en '$printer'" }
+        }
+
+        # Reintentar elevado: esto permite que Guardar aplique el cambio
+        # permanentemente aunque el Configurator se haya abierto sin UAC.
+        $printerB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($printer))
+        $inner = '$printer=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("' + $printerB64 + '")); & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct"'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+        $elevated = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru -Wait `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded)
+        Start-Sleep -Milliseconds 250
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) {
+            return @{ Success = $true; Message = "Impresion directa activada en '$printer' (con permisos de administrador)" }
+        }
+        return @{ Success = $false; Message = "Windows no pudo activar 'Imprimir directamente en la impresora' para '$printer'" }
+    } catch {
+        return @{ Success = $false; Message = "No se pudo configurar impresion directa en '$printer': $($_.Exception.Message)" }
+    }
+}
+
+function Remove-LidaStalePrinterJobs {
+    # Elimina solo trabajos antiguos reconocibles como LidaPrint/Ghostscript.
+    # Los trabajos de Word, navegador u otras aplicaciones no se tocan.
+    param([Parameter(Mandatory)][string]$printer)
+    $removed = 0
+    try {
+        $jobs = @(Get-PrintJob -PrinterName $printer -ErrorAction Stop)
+        foreach ($job in $jobs) {
+            $doc = [string]$job.DocumentName
+            if (-not $doc) { $doc = [string]$job.Document }
+            if ($doc -match '^(?i:LidaPrint\b|Ghostscript (Output|document)\b)') {
+                try {
+                    Remove-PrintJob -PrinterName $printer -ID ([int]$job.Id) -ErrorAction Stop
+                    $removed++
+                } catch { }
+            }
+        }
+    } catch { }
+    return $removed
+}
 
 # ===================== DRIVER FUNCTIONS =====================
 function Get-DriverBaseRef {
@@ -1683,6 +1747,14 @@ $btnTest.Add_Click({
     if (-not $cmbPrinter.SelectedItem) {
         [System.Windows.Forms.MessageBox]::Show("Seleccione una impresora.", "Error", "OK", "Error"); return
     }
+    $testDirect = Set-LidaPrinterDirectMode ([string]$cmbPrinter.SelectedItem)
+    if (-not $testDirect.Success) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "$($testDirect.Message).`n`nAcepta la confirmacion UAC si Windows la muestra. Si vuelve a fallar, el controlador de esa impresora no permite impresion directa.",
+            "No se pudo configurar la cola", "OK", "Error"
+        ) | Out-Null
+        return
+    }
 
     $tmpDir = Join-Path $scriptDir "temp"
     if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
@@ -1692,7 +1764,7 @@ $btnTest.Add_Click({
     # Prueba con Ghostscript (mismo motor que usa el monitor)
     $dpiTest = 300
     if (-not [int]::TryParse($cmbDPI.Text, [ref]$dpiTest) -or $dpiTest -lt 72 -or $dpiTest -gt 1200) { $dpiTest = 300 }
-    $gsTestArgs = "-dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r$dpiTest -dNumCopies=1 `"-sOutputFile=%printer%$($cmbPrinter.SelectedItem)`" -f `"$testPdf`""
+    $gsTestArgs = "-dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r$dpiTest -dNumCopies=1 `"-sOutputFile=%printer%$($cmbPrinter.SelectedItem)`" -c `"<< /UserSettings << /DocumentName (LidaPrint: prueba) >> >> setpagedevice`" -f `"$testPdf`""
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $txtGs.Text
@@ -1865,6 +1937,7 @@ $btnSave.Add_Click({
         downloadFolder = $txtDownloads.Text
         installPath    = $scriptDir
         autoStart      = $chkAutoStart.Checked
+        directPrint    = $true
         enableLogging  = $chkLogging.Checked
         usePattern     = $chkUsePattern.Checked
         invoicePattern = $txtPattern.Text
@@ -1886,6 +1959,18 @@ $btnSave.Add_Click({
         escposAntialias   = $chkEscAA.Checked
     }
 
+    # Aplicar antes de reiniciar el monitor. El cambio es persistente en
+    # Windows, asi el spooler tampoco reanuda el trabajo durante el proximo
+    # arranque, cuando LidaPrint aun no tiene sesion iniciada.
+    $oldJobs = Remove-LidaStalePrinterJobs ([string]$newConfig.printer)
+    $directResult = Set-LidaPrinterDirectMode ([string]$newConfig.printer)
+    if (-not $directResult.Success) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "$($directResult.Message).`n`nAcepta la confirmacion UAC si Windows la muestra, o activa manualmente 'Imprimir directamente en la impresora' en Propiedades de la impresora y vuelve a Guardar. Si la opcion esta deshabilitada, el controlador no permite este modo.",
+            "No se pudo configurar la cola", "OK", "Error"
+        ) | Out-Null
+        return
+    }
     Save-Config $newConfig
 
     # La tarea programada SIEMPRE apunta a donde vive este script ($scriptDir),

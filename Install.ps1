@@ -269,6 +269,63 @@ if (Test-Path $configPath) {
     Write-Warn "config.json no encontrado; el Configurator creara uno al guardar."
 }
 
+# ===================== 4.1. EVITAR COLA PERSISTENTE =====================
+# Windows carga el Print Spooler antes de la sesion del usuario. Configurar la
+# impresora en modo DIRECT durante la instalacion evita que un trabajo pendiente
+# se reanude antes de que arranque LidaPrint.
+Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+Get-Process -Name "LidaPrint" -ErrorAction SilentlyContinue |
+    Where-Object Id -ne $PID |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*LidaPrint.ps1*" -and $_.ProcessId -ne $PID } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 300
+function Set-LidaPrinterDirectMode {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        $escaped = $printer -replace "'", "''"
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) { return $true }
+        & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 150
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) { return $true }
+        $printerB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($printer))
+        $inner = '$printer=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("' + $printerB64 + '")); & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct"'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru -Wait `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) | Out-Null
+        Start-Sleep -Milliseconds 250
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        return ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0))
+    } catch { return $false }
+}
+function Remove-LidaStalePrinterJobs {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        foreach ($job in @(Get-PrintJob -PrinterName $printer -ErrorAction Stop)) {
+            $doc = [string]$job.DocumentName
+            if (-not $doc) { $doc = [string]$job.Document }
+            if ($doc -match '^(?i:LidaPrint\b|Ghostscript (Output|document)\b)') {
+                Remove-PrintJob -PrinterName $printer -ID ([int]$job.Id) -ErrorAction SilentlyContinue
+            }
+        }
+    } catch { }
+}
+$savedConfig = $null
+if (Test-Path $configPath) {
+    try { $savedConfig = Get-Content $configPath -Raw | ConvertFrom-Json } catch { }
+}
+if ($savedConfig -and $savedConfig.printer) {
+    Remove-LidaStalePrinterJobs ([string]$savedConfig.printer)
+    if (Set-LidaPrinterDirectMode ([string]$savedConfig.printer)) {
+        Write-OK "Impresion directa activada en '$($savedConfig.printer)'"
+    } else {
+        Write-Warn "No se pudo activar impresion directa en '$($savedConfig.printer)'. Acepta la confirmacion UAC al guardar en el Configurator y verifica que el controlador permita impresion directa."
+    }
+}
+
 # ===================== 5. TAREA PROGRAMADA (NIVEL USUARIO) =====================
 Write-Step "Configurando tarea programada..."
 $monitorPath = Join-Path $installPath "LidaPrint.ps1"

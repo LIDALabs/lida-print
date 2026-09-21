@@ -273,7 +273,7 @@ if (-not (Test-Path $configPath)) {
         continuousForm = $false; formLength = 279; topOffset = 0; linePitch = 4.23
         gsPath = $gsPath; renderAsImage = $false
         downloadFolder = $defaultDownload; installPath = $installPath
-        autoStart = $true; enableLogging = $true
+        autoStart = $true; directPrint = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
         mode = "local"; webEnabled = $false; webPort = 8080; webApiKey = ""
         cloudUrl = ""; cloudToken = ""; cloudPollSeconds = 3
@@ -284,6 +284,51 @@ if (-not (Test-Path $configPath)) {
     $cfg.installPath = $installPath
     if ($gsPath) { $cfg.gsPath = $gsPath }
     $cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+}
+
+# --- 7.1. Evitar trabajos persistentes del spooler ---
+# Esta configuracion se aplica durante la actualizacion, antes de registrar y
+# arrancar la tarea. Asi un trabajo viejo no puede adelantarse al monitor en el
+# siguiente encendido de Windows.
+function Set-LidaPrinterDirectMode {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        $escaped = $printer -replace "'", "''"
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) { return $true }
+        & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 150
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        if ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0)) { return $true }
+        $printerB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($printer))
+        $inner = '$printer=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("' + $printerB64 + '")); & "$env:SystemRoot\System32\rundll32.exe" "printui.dll,PrintUIEntry" "/Xs" "/n" $printer "attributes" "+direct"'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+        Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru -Wait `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) | Out-Null
+        Start-Sleep -Milliseconds 250
+        $p = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$escaped'" -ErrorAction Stop
+        return ($null -ne $p -and (($p.Attributes -band 0x2) -ne 0))
+    } catch { return $false }
+}
+function Remove-LidaStalePrinterJobs {
+    param([Parameter(Mandatory)][string]$printer)
+    try {
+        foreach ($job in @(Get-PrintJob -PrinterName $printer -ErrorAction Stop)) {
+            $doc = [string]$job.DocumentName
+            if (-not $doc) { $doc = [string]$job.Document }
+            if ($doc -match '^(?i:LidaPrint\b|Ghostscript (Output|document)\b)') {
+                Remove-PrintJob -PrinterName $printer -ID ([int]$job.Id) -ErrorAction SilentlyContinue
+            }
+        }
+    } catch { }
+}
+if ($cfg -and $cfg.printer) {
+    Remove-LidaStalePrinterJobs ([string]$cfg.printer)
+    if (Set-LidaPrinterDirectMode ([string]$cfg.printer)) {
+        Write-OK "Impresion directa activada en '$($cfg.printer)'"
+    } else {
+        Write-Warn "No se pudo activar impresion directa en '$($cfg.printer)'. Acepta la confirmacion UAC al guardar en el Configurator y verifica que el controlador permita impresion directa."
+    }
 }
 
 # --- 8. Scheduled task ---

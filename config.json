@@ -21,6 +21,7 @@
     "downloadFolder": "",
     "installPath": "",
     "autoStart": true,
+    "directPrint": true,
     "enableLogging": true,
     "usePattern": true,
     "invoicePattern": "^(F|ND|NC)-\\d{8}\\.pdf$",

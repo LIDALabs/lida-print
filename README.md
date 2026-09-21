@@ -390,6 +390,7 @@ y dejo de imprimir".
 | `downloadFolder` | string | Carpeta monitoreada (modos Local y Red local; no se usa en Nube). Vacia = Descargas del usuario actual |
 | `installPath` | string | Informativo. En runtime los scripts se auto-ubican con su propia ruta |
 | `autoStart` | bool | Si debe existir la tarea programada |
+| `directPrint` | bool | Activa la impresion directa de Windows para que el spooler no conserve trabajos entre reinicios |
 | `enableLogging` | bool | Habilita el log |
 | `usePattern` | bool | Filtra por regex (solo modo Local) |
 | `invoicePattern` | string | Regex de validacion de nombres |
@@ -850,6 +851,17 @@ gswin64c.exe -dBATCH -dNOPAUSE -dQUIET -dNoCancel -sDEVICE=mswinpr2 -r300 -dNumC
 | `-dNumCopies=N` | Copias |
 | `-c "<< /BeginPage ... >>"` | Margenes (desplazamiento puro por lado), topOffset y escala del usuario |
 | `-dTextAlphaBits=4 -dGraphicsAlphaBits=4` | Suavizado maximo (checkbox en la pestana Avanzado) |
+
+LidaPrint configura la impresora seleccionada con **Imprimir directamente en la impresora**
+(atributo `PRINTER_ATTRIBUTE_DIRECT`). Esto evita que el spooler de Windows conserve un
+trabajo pendiente y lo reanude durante el siguiente arranque, antes de que inicie la tarea
+de LidaPrint. Al guardar la configuracion tambien se cancelan trabajos antiguos cuyo nombre
+identifica a LidaPrint o Ghostscript; no se vacian trabajos de otras aplicaciones.
+
+Al guardar, Windows puede mostrar una confirmacion UAC para hacer permanente el cambio.
+Algunos controladores modernos (por ejemplo, los basados en XPS/IPP) deshabilitan esa
+opcion; en ese caso el Configurator lo informa y no permite que el monitor imprima sin la
+proteccion, porque la cola podria reimprimir trabajos al arrancar.
 
 > **Nota fisica:** el tamano configurado define el area que ocupa el CONTENIDO. La hoja
 > fisica es la que este cargada en la impresora: un contenido de 50x100mm sobre una hoja
