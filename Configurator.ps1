@@ -186,11 +186,55 @@ function Get-FormatManifest {
     }
 }
 
+function Get-UsbPrinterPortsFromInstanceIds {
+    param([string[]]$InstanceId)
+    foreach ($id in $InstanceId) {
+        if ($id -match '&(USB\d+)$') { $Matches[1] }
+    }
+}
+
+function Install-BuiltinPrinterDriver {
+    param([Parameter(Mandatory)]$Driver)
+
+    $devices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object {
+        $_.FriendlyName -match $Driver.pnpNameMatch -and $_.InstanceId -match '^USBPRINT\\'
+    })
+    $ports = @(Get-UsbPrinterPortsFromInstanceIds @($devices | ForEach-Object { $_.InstanceId }) | Sort-Object -Unique)
+    if (-not $ports) {
+        throw "No se detecto el adaptador USB de la EPSON. Conecte la impresora y compruebe que Windows muestra '$($Driver.pnpNameMatch)' en el Administrador de dispositivos."
+    }
+
+    $queue = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $Driver.queueName })
+    if ($ports.Count -gt 1) {
+        $existingPorts = @($queue | Where-Object { $_.PortName -in $ports } | Select-Object -ExpandProperty PortName -Unique)
+        if ($existingPorts.Count -eq 1) { $ports = $existingPorts }
+        else { throw "Se detectaron varios adaptadores USB compatibles ($($ports -join ', ')). Deje conectado un solo adaptador y vuelva a intentarlo." }
+    }
+    $portName = $ports[0]
+
+    if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {
+        throw "Windows detecto el adaptador en $portName, pero no existe el puerto de impresora correspondiente. Desconecte y reconecte el adaptador, espere a que Windows lo instale y vuelva a intentarlo."
+    }
+    if (-not (Get-PrinterDriver -Name $Driver.windowsDriver -ErrorAction SilentlyContinue)) {
+        throw "No esta instalado el controlador de Windows '$($Driver.windowsDriver)'. Agreguelo desde Configuracion > Bluetooth y dispositivos > Impresoras y escaneres > Propiedades del servidor de impresion > Controladores, y vuelva a intentarlo."
+    }
+
+    if ($queue.Count) {
+        Set-Printer -Name $Driver.queueName -DriverName $Driver.windowsDriver -PortName $portName -ErrorAction Stop
+    } else {
+        Add-Printer -Name $Driver.queueName -DriverName $Driver.windowsDriver -PortName $portName -ErrorAction Stop
+    }
+}
+
 function Install-PrinterDriver {
     param(
         [Parameter(Mandatory)]$Driver,
         [Parameter(Mandatory)][string]$BaseUrl
     )
+    if ($Driver.type -eq 'builtin') {
+        Install-BuiltinPrinterDriver -Driver $Driver
+        return 0
+    }
     $url = if ($Driver.file -match '^https?://') { $Driver.file } else { "$BaseUrl/$($Driver.file)" }
     $ext = [IO.Path]::GetExtension($Driver.file)
     # %TEMP% may be a dead 8.3 short path (alias generation disabled on the
@@ -1510,7 +1554,7 @@ $lblDrvNotes.Text = ""
 Set-DarkTheme $lblDrvNotes
 
 $btnDrvInstall = New-Object System.Windows.Forms.Button
-$btnDrvInstall.Text = "Instalar driver seleccionado"
+$btnDrvInstall.Text = "Instalar / configurar"
 $btnDrvInstall.Location = New-Object System.Drawing.Point(12, 238)
 $btnDrvInstall.Size = New-Object System.Drawing.Size($L_HIN, 28)
 Set-DarkTheme $btnDrvInstall
@@ -1595,12 +1639,23 @@ $btnDrvInstall.Add_Click({
     $drv = $script:driverManifest.drivers[$lstDrv.SelectedIndex]
     $baseUrl = "https://raw.githubusercontent.com/LIDALabs/lida-print/$(Get-DriverBaseRef)"
     $btnDrvInstall.Enabled = $false
-    $lblDrvStatus.Text = "Descargando e instalando $($drv.name)..."
+    $lblDrvStatus.Text = if ($drv.type -eq 'builtin') { "Configurando la cola de Windows para $($drv.name)..." } else { "Descargando e instalando $($drv.name)..." }
     $lblDrvStatus.Refresh(); [System.Windows.Forms.Application]::DoEvents()
     $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     try {
         $code = Install-PrinterDriver -Driver $drv -BaseUrl $baseUrl
         if ($code -eq 0) {
+            if ($drv.type -eq 'builtin') {
+                $cmbPrinter.Items.Clear()
+                foreach ($p in (Get-PrinterList)) { [void]$cmbPrinter.Items.Add($p) }
+                if ($cmbPrinter.Items.Contains($drv.queueName)) { $cmbPrinter.SelectedItem = $drv.queueName }
+                $savedConfig = Load-Config
+                $savedConfig.printer = $drv.queueName
+                Save-Config $savedConfig
+                $lblDrvStatus.Text = "Cola de Windows configurada correctamente."
+                [System.Windows.Forms.MessageBox]::Show("La cola $($drv.queueName) esta lista con '$($drv.windowsDriver)'. Se selecciono en LidaPrint. No se aplico calibracion ESC/POS.", "LidaPrint") | Out-Null
+                return
+            }
             # Dejar la impresora utilizable de inmediato (reasignar puerto USB,
             # desactivar bidireccional, limpiar offline) segun postInstall.
             $repairLog = {

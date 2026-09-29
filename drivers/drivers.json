@@ -2,6 +2,15 @@
   "schemaVersion": 1,
   "drivers": [
     {
+      "id": "epson-tm-u200pd",
+      "name": "EPSON TM-U200PD (M119D)",
+      "type": "builtin",
+      "queueName": "EPSON TM-U200PD",
+      "windowsDriver": "Generic / Text Only",
+      "pnpNameMatch": "^EPSON TM-P2\\.01$",
+      "notes": "Cola de texto usando el controlador incluido con Windows; detecta el puerto USB del adaptador conectado."
+    },
+    {
       "id": "epson-tm-u220pd",
       "name": "EPSON TM-U220PD (M188D)",
       "file": "drivers/epson-tm-u220pd/APD_459aEWM_e.zip",

@@ -3,6 +3,12 @@ Describe "drivers.json manifest" {
         $repoRoot = Split-Path -Parent $PSScriptRoot
         $script:manifest = Get-Content (Join-Path $repoRoot "drivers/drivers.json") -Raw | ConvertFrom-Json
         $script:repoRoot = $repoRoot
+        $configurator = Get-Content (Join-Path $repoRoot "Configurator.ps1") -Raw
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($configurator, [ref]$tokens, [ref]$errors)
+        $helper = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-UsbPrinterPortsFromInstanceIds' }, $true)
+        Invoke-Expression $helper.Extent.Text
     }
     It "has schemaVersion 1 and at least 2 drivers" {
         $script:manifest.schemaVersion | Should -Be 1
@@ -12,13 +18,20 @@ Describe "drivers.json manifest" {
         foreach ($d in $script:manifest.drivers) {
             $d.id      | Should -Match '^[a-z0-9-]+$'
             $d.name    | Should -Not -BeNullOrEmpty
-            $d.file    | Should -Match '^drivers/'
-            $d.type    | Should -BeIn @("exe", "zip")
-            $d.sha256  | Should -Match '^[A-F0-9]{64}$'
+            $d.type    | Should -BeIn @("exe", "zip", "builtin")
+            if ($d.type -eq 'builtin') {
+                $d.queueName | Should -Not -BeNullOrEmpty
+                $d.windowsDriver | Should -Not -BeNullOrEmpty
+                $d.pnpNameMatch | Should -Not -BeNullOrEmpty
+            } else {
+                $d.file    | Should -Match '^drivers/'
+                $d.sha256  | Should -Match '^[A-F0-9]{64}$'
+            }
         }
     }
     It "every referenced file exists and its hash matches" {
         foreach ($d in $script:manifest.drivers) {
+            if ($d.type -eq 'builtin') { continue }
             $path = Join-Path $script:repoRoot $d.file
             Test-Path $path | Should -BeTrue
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash | Should -Be $d.sha256
@@ -26,6 +39,7 @@ Describe "drivers.json manifest" {
     }
     It "no driver file exceeds the GitHub 100MB limit" {
         foreach ($d in $script:manifest.drivers) {
+            if ($d.type -eq 'builtin') { continue }
             (Get-Item (Join-Path $script:repoRoot $d.file)).Length | Should -BeLessThan 100MB
         }
     }
@@ -74,5 +88,20 @@ Describe "drivers.json manifest" {
         $epson.calibration.escposWidthMm | Should -Be 64
         $epson.calibration.escposHdpi | Should -Be 158.75
         $epson.calibration.escposLineSpacing | Should -Be 16
+    }
+    It "el driver EPSON TM-U200PD usa la cola y el controlador incluidos en Windows" {
+        $epson = $script:manifest.drivers | Where-Object { $_.id -eq 'epson-tm-u200pd' }
+        $epson.type | Should -Be 'builtin'
+        $epson.queueName | Should -Be 'EPSON TM-U200PD'
+        $epson.windowsDriver | Should -Be 'Generic / Text Only'
+        $epson.pnpNameMatch | Should -Be '^EPSON TM-P2\.01$'
+        $epson.PSObject.Properties.Name | Should -Not -Contain 'file'
+        $epson.PSObject.Properties.Name | Should -Not -Contain 'sha256'
+        $epson.PSObject.Properties.Name | Should -Not -Contain 'calibration'
+    }
+    It "extrae puertos USB de InstanceId USBPRINT, ignora no coincidentes y conserva varios para resolver ambiguedad" {
+        @(Get-UsbPrinterPortsFromInstanceIds @('USBPRINT\EPSONTM-P2.01\6&9AF5591&0&USB001')) | Should -Be @('USB001')
+        @(Get-UsbPrinterPortsFromInstanceIds @('USBPRINT\EPSONTM-P2.01\no-port')) | Should -BeNullOrEmpty
+        @(Get-UsbPrinterPortsFromInstanceIds @('USBPRINT\A\&USB001', 'USBPRINT\B\&USB002')) | Should -Be @('USB001', 'USB002')
     }
 }

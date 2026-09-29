@@ -896,6 +896,7 @@ pestana **Drivers y formatos** del Configurator — no hace falta buscarlos en l
 
 | Modelo | Tipo | Formato |
 |--------|------|---------|
+| EPSON TM-U200PD (M119D) | Matricial / ticket | Controlador incluido en Windows (Generic / Text Only) |
 | EPSON TM-U220PD | Matricial / ticket | APD (zip) |
 | EPSON M188D | Termica / ticket | APD (zip) |
 | Canon LBP6030 / 6030B / 6030w | Laser | Instalador exe |
@@ -905,9 +906,17 @@ pestana **Drivers y formatos** del Configurator — no hace falta buscarlos en l
 1. Abrir el Configurator (`LidaPrint.exe`).
 2. Ir a la pestana **Drivers y formatos**.
 3. Seleccionar el modelo de la lista.
-4. Hacer clic en **Instalar** y seguir las instrucciones del instalador.
+4. Hacer clic en **Instalar / configurar**. En drivers con instalador, seguir las instrucciones en pantalla.
 
-Al terminar la instalacion, LidaPrint deja la impresora **utilizable de inmediato**:
+La TM-U200PD es una excepcion: LidaPrint no descarga ningun instalador Epson. Configura
+en cada PC una cola local llamada `EPSON TM-U200PD` con el controlador incluido en
+Windows `Generic / Text Only`. El puerto USB dinamico (`USBnnn`) se obtiene del dispositivo
+PnP presente y se comprueba antes de crear o reparar la cola. Este controlador permite
+imprimir texto/RAW; no se ha medido ni aplicado calibracion ESC/POS para este modelo. Esa
+calibracion sigue siendo un paso separado y requiere validacion fisica.
+
+Para los drivers que incluyen un instalador, al terminar la instalacion LidaPrint deja
+la impresora **utilizable de inmediato**:
 segun el bloque `postInstall` del driver (ver abajo) reasigna el puerto, apaga el
 bidireccional y limpia el estado "sin conexion"; y segun el bloque `calibration`
 escribe en `config.json` el **DPI, ancho imprimible e interlineado ESC/POS medidos
