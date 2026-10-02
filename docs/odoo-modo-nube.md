@@ -124,6 +124,13 @@ Authorization: Bearer <cloudToken>
 User-Agent: LidaPrint/<versión>
 ```
 
+Si `cloudDb` no está vacío, LidaPrint añade `X-Odoo-dbfilter` con una regex
+exacta: `'^' + [regex]::Escape(cloudDb.Trim()) + '$'`. El campo **Base de datos**
+del Configurador es opcional y espera el nombre, no una regex. Se aplica al
+ping de prueba (sin guardar), keep-alive, poll, PDF, ack y todos sus reintentos;
+nunca a endpoints de impresoras LAN. Vacío o ausente conserva la selección
+automática. Requiere soporte del servidor y del proxy (§6.3).
+
 **Rechazo por token.** Con un token inválido, revocado o de un equipo
 archivado, **todos** los endpoints responden, sin ningún efecto en la base:
 
@@ -615,8 +622,12 @@ Opciones, de la preferida a la menos:
 3. **`dbfilter_from_header`** (módulo OCA documentado en el README del módulo:
    `proxy_mode = True`, `server_wide_modules = web,dbfilter_from_header`): el
    proxy inyecta `X-Odoo-dbfilter` por vhost o en `location /lidaprint/`.
-   LidaPrint no envía esa cabecera (no está en el contrato), así que la debe
-   poner nginx.
+    LidaPrint puede enviar esa cabecera con `cloudDb` (nombre exacto opcional),
+    pero el `dbfilter` normal también debe permitir la base. En producción,
+    el reverse proxy debe **sobrescribir** la cabecera entrante con un filtro
+    de confianza por vhost/ruta, y eliminarla en las demás rutas: nunca confiar
+    ni reenviar ciegamente una cabecera controlada por el cliente. El filtro
+    del proxy prevalece sobre `cloudDb`; la cabecera no es autenticación.
 4. **`?db=` en la URL: no sirve.** En Odoo 18 solo `web/controllers/utils.py`
    (`ensure_db`) lee ese parámetro, y únicamente para `/web`. Además LidaPrint
    quita cualquier query de `cloudUrl`.

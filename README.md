@@ -172,7 +172,7 @@ Debajo se muestra **solo** el panel del modo elegido:
 |------|------------|
 | Local (por nombre de archivo) | Carpeta de descargas + filtro por nombre |
 | Red local (Odoo envia a esta PC) | Carpeta de descargas + puerto, API Key y URL para Odoo |
-| Nube (Odoo en VPS) | URL de Odoo, token, intervalo de consulta y **Probar conexion** |
+| Nube (Odoo en VPS) | URL de Odoo, token, base de datos opcional, intervalo de consulta y **Probar conexion** |
 
 | Campo | Descripcion | Default |
 |-------|-------------|---------|
@@ -184,6 +184,7 @@ Debajo se muestra **solo** el panel del modo elegido:
 | URL de Odoo | Direccion **base** de Odoo, ej. `https://cliente.example.com`: esquema, dominio y, si hace falta, puerto, **sin `/odoo` ni `/web`**. Si se pega con una ruta (copiada del navegador), **Probar conexion** y **Guardar** la quitan y avisan. Debe ser `https://`; `http://` solo se admite hacia la red local (`localhost`, nombres `.local`, IP privadas, link-local o CGNAT, IPv6 `::1`, `fc00::/7` o `fe80::/10`), con advertencia | (vacio) |
 | Token | Token del equipo, generado en Odoo por un **administrador**: **Ajustes > API de integracion > LidaPrint > Equipos LidaPrint** (el boton se ve con cualquier destino) o **Facturacion > Configuracion > Equipos LidaPrint**; abrir el equipo y pulsar **Generar token**. Se muestra una sola vez y tiene 43 caracteres: si no, al probar o guardar se avisa (sin bloquear) por si se copio a medias. Enmascarado (boton **Mostrar/Ocultar**) | (vacio) |
 | Consultar cada (s) | Intervalo inicial entre consultas (1-300). Odoo puede indicar otro con `next_poll` y ese manda | 3 |
+| Base de datos | Opcional: nombre exacto de la base, no una regex. Se recortan los espacios externos. Vacio conserva la seleccion automatica. Requiere soporte `dbfilter_from_header` en Odoo y configuracion del proxy (ver Contrato HTTP) | (vacio) |
 | Probar conexion | Llama a `GET /ping` con la URL y el token escritos (sin guardar). Muestra el equipo y la compania, o el error: 401 (equipo archivado o token revocado, o token mal copiado), 404/400 (URL incorrecta o base de datos no resuelta, ver [Solucion de problemas (Nube)](#solucion-de-problemas-nube)), sin conexion | — |
 
 ### Pestana 2: Impresora
@@ -358,6 +359,7 @@ y dejo de imprimir".
     "webApiKey":       "",
     "cloudUrl":        "",
     "cloudToken":      "",
+    "cloudDb":         "",
     "cloudPollSeconds": 3,
     "escposEnabled":     false,
     "escposWidthMm":     64,
@@ -401,6 +403,7 @@ y dejo de imprimir".
 | `cloudUrl` | string | URL base de Odoo para el modo Nube (`https://...`): solo esquema, dominio y puerto, sin `/odoo` ni `/web` (el Configurator y el monitor quitan cualquier ruta) |
 | `cloudToken` | string | Token del equipo generado en Odoo. **Obligatorio** en modo Nube: sin URL o sin token el monitor no arranca. `config.json` queda con acceso restringido al usuario |
 | `cloudPollSeconds` | int | Intervalo inicial de consulta en segundos (1-300). Odoo lo ajusta con `next_poll` |
+| `cloudDb` | string | Nombre exacto opcional de la base de Odoo. Vacio o ausente conserva el enrutamiento automatico. Si se indica, todas las solicitudes a Odoo llevan `X-Odoo-dbfilter` con `^` + `[regex]::Escape(cloudDb.Trim())` + `$` |
 | `escposEnabled` | bool | Imprime por la via RAW ESC/POS (rasteriza el PDF y manda `ESC *`) en vez de GDI/Ghostscript. Para ticketeras cuyo driver no acepta grafica GDI por el puerto disponible |
 | `escposWidthMm` | decimal | Ancho imprimible del cabezal en mm (barra de calibracion que llena el papel) |
 | `escposHdpi` | decimal | DPI horizontal medido: `puntos / (mm / 25.4)` |
@@ -510,6 +513,19 @@ Guia paso a paso para tecnicos (VPS, cada caja y errores comunes): [`docs/instal
 
 Base: `{cloudUrl}/lidaprint/v1`. Toda peticion lleva `Authorization: Bearer <cloudToken>` y
 `User-Agent: LidaPrint/<version>`. Los cuerpos van en JSON (`application/json; charset=utf-8`).
+
+Con **Base de datos** (`cloudDb`) no vacia, tambien se envia `X-Odoo-dbfilter` como regex
+exacta escapada: `cliente.prod` produce `^cliente\.prod$`. Se aplica a **Probar conexion**
+con los valores sin guardar, ping de keep-alive, poll, descarga, ack y sus reintentos.
+No se envia a endpoints de impresoras LAN. Vacio mantiene la seleccion automatica actual.
+Odoo necesita el modulo server-wide OCA `dbfilter_from_header` y `proxy_mode = True`;
+su `dbfilter` normal debe permitir esa base. La cabecera no es autenticacion.
+
+**Produccion:** el reverse proxy debe sobrescribir `X-Odoo-dbfilter` con un filtro de
+confianza por dominio/ruta (o eliminarlo donde no corresponda), nunca confiar ni reenviar
+ciegamente el valor entrante del cliente. El campo de LidaPrint no sustituye esa politica;
+si el proxy lo sobrescribe, manda el filtro del proxy. Ver
+[resolucion de bases](docs/odoo-modo-nube.md#63-resolución-de-la-base-de-datos-con-authnone).
 
 | Metodo | Ruta | Cuerpo | Respuesta |
 |--------|------|--------|-----------|

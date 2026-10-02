@@ -177,6 +177,14 @@ dbfilter = ^%d$
 `cliente`. `^%h$` usa el host completo (la base debe llamarse
 `cliente.example.com`). Afecta a toda la instancia.
 
+LidaPrint también ofrece **Base de datos** (`cloudDb`) opcional en Conexión:
+espera el nombre exacto y envía `X-Odoo-dbfilter` como regex escapada y anclada
+en todas las peticiones a Odoo, incluidos prueba y reintentos. Vacío conserva
+la selección automática. Esto requiere el soporte de la opción 2; en
+producción nginx debe sobrescribir la cabecera con un filtro de confianza,
+nunca reenviar ciegamente el valor del cliente. Si nginx la sobrescribe,
+manda su filtro, no el campo de LidaPrint.
+
 **Opción 2 — cabecera `X-Odoo-dbfilter` desde nginx** (módulo OCA
 `dbfilter_from_header`, de `server-tools` 18.0). Solo filtra lo que pasa por
 `location /lidaprint/`, sin tocar el acceso web al resto de las bases:

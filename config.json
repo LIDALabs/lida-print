@@ -31,5 +31,6 @@
     "webApiKey": "",
     "cloudUrl": "",
     "cloudToken": "",
+    "cloudDb": "",
     "cloudPollSeconds": 3
 }

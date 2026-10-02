@@ -192,6 +192,14 @@ function Get-CloudConfigHint {
     return "URL incorrecta o base de datos no resuelta: revise la URL (sin /odoo ni /web) y, si el servidor tiene varias bases, configure dbfilter por dominio"
 }
 
+function Get-CloudRequestHeaders {
+    param([string]$Token, [string]$Db)
+    $headers = @{ Authorization = "Bearer $($Token.Trim())" }
+    $dbName = $Db.Trim()
+    if ($dbName) { $headers["X-Odoo-dbfilter"] = '^' + [regex]::Escape($dbName) + '$' }
+    return $headers
+}
+
 # Ghostscript: consola de 64 bits (gswin64c) o 32 (gswin32c)
 $gsCandidates = @()
 $gsCandidates += (Join-Path $scriptDir "bin\gswin64c.exe")
@@ -1204,7 +1212,7 @@ function Invoke-CloudRequest {
     $req = @{
         Uri             = $script:cloudBase + $Path
         Method          = $Method
-        Headers         = @{ Authorization = "Bearer $($script:cloudToken)" }
+        Headers         = Get-CloudRequestHeaders $script:cloudToken ([string]$config.cloudDb)
         UserAgent       = "LidaPrint/$($script:cloudVersion)"
         UseBasicParsing = $true
         TimeoutSec      = $TimeoutSec

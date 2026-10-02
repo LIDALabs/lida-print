@@ -276,7 +276,7 @@ if (-not (Test-Path $configPath)) {
         autoStart = $true; directPrint = $true; enableLogging = $true
         usePattern = $true; invoicePattern = "^(F|ND|NC)-\d{8}\.pdf$"
         mode = "local"; webEnabled = $false; webPort = 8080; webApiKey = ""
-        cloudUrl = ""; cloudToken = ""; cloudPollSeconds = 3
+        cloudUrl = ""; cloudToken = ""; cloudDb = ""; cloudPollSeconds = 3
     } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
 } else {
     # Upgrade: refresh gsPath/installPath, preserve the rest.

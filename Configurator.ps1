@@ -41,7 +41,7 @@ function Load-Config {
         webEnabled = $false; webPort = 8080; webApiKey = ""
         escposEnabled = $false; escposWidthMm = 64; escposHdpi = 158.75; escposVdpi = 72; escposDensity = 1
         escposLineSpacing = 16; escposThreshold = 170; escposAntialias = $true
-        cloudUrl = ""; cloudToken = ""; cloudPollSeconds = 3
+        cloudUrl = ""; cloudToken = ""; cloudDb = ""; cloudPollSeconds = 3
     }
     $cfg = $null
     if (Test-Path $configPath) {
@@ -787,6 +787,14 @@ function Get-CloudConfigHint {
     # Texto del Configurador y del log para un 404/400 del ping o del poll.
     return "URL incorrecta o base de datos no resuelta: revise la URL (sin /odoo ni /web) y, si el servidor tiene varias bases, configure dbfilter por dominio"
 }
+
+function Get-CloudRequestHeaders {
+    param([string]$Token, [string]$Db)
+    $headers = @{ Authorization = "Bearer $($Token.Trim())" }
+    $dbName = $Db.Trim()
+    if ($dbName) { $headers["X-Odoo-dbfilter"] = '^' + [regex]::Escape($dbName) + '$' }
+    return $headers
+}
 # ----- Fin de las funciones compartidas -----
 
 function Get-CloudTokenWarning {
@@ -948,7 +956,7 @@ $nudPort.Add_ValueChanged($updateApiUrl)
 & $updateApiUrl
 
 # --- Panel Nube: esta PC consulta a Odoo por HTTPS ---
-$grpCloud = New-Group $tConn "Nube (Odoo en un VPS o en internet)" $panelY 5
+$grpCloud = New-Group $tConn "Nube (Odoo en un VPS o en internet)" $panelY 7
 [void](Add-Label $grpCloud "URL de Odoo:" 0)
 
 $txtCloudUrl = New-Object System.Windows.Forms.TextBox
@@ -970,26 +978,35 @@ $btnToggleToken.Add_Click({
 })
 Add-Ctl $grpCloud $btnToggleToken 1 498 80
 
-[void](Add-Label $grpCloud "Consultar cada (s):" 2)
+[void](Add-Label $grpCloud "Base de datos:" 2)
+$txtCloudDb = New-Object System.Windows.Forms.TextBox
+$txtCloudDb.Text = [string]$config.cloudDb
+Add-Ctl $grpCloud $txtCloudDb 2 $L_CX1 428
+
+$lblCloudDbHint = New-Object System.Windows.Forms.Label
+$lblCloudDbHint.Text = "Opcional: vacio = seleccion automatica; indica el nombre exacto, no una regex."
+Add-Ctl $grpCloud $lblCloudDbHint 3 $L_LX1 $L_FULL
+
+[void](Add-Label $grpCloud "Consultar cada (s):" 4)
 
 $nudCloudPoll = New-Object System.Windows.Forms.NumericUpDown
 $nudCloudPoll.Minimum = 1
 $nudCloudPoll.Maximum = 300
 Set-NudClamped $nudCloudPoll $config.cloudPollSeconds
-Add-Ctl $grpCloud $nudCloudPoll 2 $L_CX1 60
+Add-Ctl $grpCloud $nudCloudPoll 4 $L_CX1 60
 
 $btnCloudTest = New-Object System.Windows.Forms.Button
 $btnCloudTest.Text = "Probar conexion"
-Add-Ctl $grpCloud $btnCloudTest 3 $L_CX1 130
+Add-Ctl $grpCloud $btnCloudTest 5 $L_CX1 130
 
 $lblCloudStatus = New-Object System.Windows.Forms.Label
-Add-Ctl $grpCloud $lblCloudStatus 3 290 288
+Add-Ctl $grpCloud $lblCloudStatus 5 290 288
 $lblCloudStatus.AutoEllipsis = $true   # nombres largos de equipo/compania
 
 # Una linea; el otro camino (menu de Facturacion) y los pasos, en el tooltip.
 $lblCloudHint = New-Object System.Windows.Forms.Label
 $lblCloudHint.Text = "Token: en Odoo (administrador), Ajustes > API de integracion > LidaPrint > Equipos LidaPrint."
-Add-Ctl $grpCloud $lblCloudHint 4 $L_LX1 $L_FULL
+Add-Ctl $grpCloud $lblCloudHint 6 $L_LX1 $L_FULL
 $lblCloudHint.AutoEllipsis = $true
 
 $btnCloudTest.Add_Click({
@@ -1019,7 +1036,7 @@ $btnCloudTest.Add_Click({
         $sp = [Net.ServicePointManager]::SecurityProtocol
         if ([int]$sp -ne 0) { [Net.ServicePointManager]::SecurityProtocol = $sp -bor [Net.SecurityProtocolType]::Tls12 }
         $ProgressPreference = "SilentlyContinue"
-        $resp = Invoke-WebRequest -Uri "$($chk.Url)/lidaprint/v1/ping" -Method Get -Headers @{ Authorization = "Bearer $token" } `
+        $resp = Invoke-WebRequest -Uri "$($chk.Url)/lidaprint/v1/ping" -Method Get -Headers (Get-CloudRequestHeaders $token $txtCloudDb.Text) `
             -UserAgent (Get-LidaPrintUserAgent) -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         # UTF-8 a mano: sin charset, PS 5.1 decodificaria como ISO-8859-1.
         $text = [System.Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray())
@@ -2003,6 +2020,7 @@ $btnSave.Add_Click({
         webApiKey      = $txtApiKey.Text
         cloudUrl         = $cloudCheck.Url
         cloudToken       = $txtCloudToken.Text.Trim()
+        cloudDb          = $txtCloudDb.Text.Trim()
         cloudPollSeconds = [int]$nudCloudPoll.Value
         escposEnabled     = $chkEscpos.Checked
         escposWidthMm     = [decimal]$nudEscWidth.Value
@@ -2162,9 +2180,10 @@ $toolTip.SetToolTip($txtApiKey,     "Obligatoria en modo Red local. Sin una API 
 $toolTip.SetToolTip($lblApiUrl,     "La URL la usa el SERVIDOR de Odoo: localhost solo sirve si Odoo corre en esta misma PC.")
 $toolTip.SetToolTip($txtCloudUrl,   "Direccion base de Odoo, ej: https://cliente.example.com (sin /odoo ni /web: si trae una ruta, se quita al probar o guardar).`nhttp:// solo se admite para localhost o un equipo de la red local.")
 $toolTip.SetToolTip($txtCloudToken, "Token del equipo, generado en Odoo (se muestra una sola vez; 43 caracteres).`nSi se revoca el token o se archiva el equipo, Odoo responde 401 y LidaPrint deja de consultar seguido.")
+$toolTip.SetToolTip($txtCloudDb,    "Opcional: nombre exacto de la base de Odoo. Vacio conserva la seleccion automatica.`nEnvia X-Odoo-dbfilter como regex exacta escapada; requiere dbfilter_from_header y configuracion del proxy.")
 $toolTip.SetToolTip($lblCloudHint,  "Solo un administrador de Odoo. Dos caminos a la misma lista:`n- Ajustes > API de integracion > LidaPrint > boton Equipos LidaPrint (con cualquier destino)`n- Facturacion > Configuracion > Equipos LidaPrint`nCrear o abrir el equipo, pulsar Generar token y pegarlo aqui, antes de pasar el destino de Odoo a Nube.")
 $toolTip.SetToolTip($nudCloudPoll,  "Intervalo inicial entre consultas. Odoo puede indicar otro (next_poll) y ese manda.")
-$toolTip.SetToolTip($btnCloudTest,  "Llama a GET /ping con la URL y el token escritos aqui (sin guardar).`nNo toma trabajos de la cola.")
+$toolTip.SetToolTip($btnCloudTest,  "Llama a GET /ping con la URL, el token y la base de datos opcional escritos aqui (sin guardar).`nNo toma trabajos de la cola.")
 $toolTip.SetToolTip($nudCopias,     "Cantidad de copias que se imprimen de cada documento.`nCon Odoo (Red local o Nube) usa 1: Odoo ya envia original y copia.")
 $toolTip.SetToolTip($cmbDPI,        "Resolucion de impresion (72-1200). Elegi un preset o escribi el valor a mano.`n203 para matriciales/termicas, 300 para laser.")
 $toolTip.SetToolTip($btnUseDpi,     "Usa el DPI que reporta el driver de la impresora seleccionada.")

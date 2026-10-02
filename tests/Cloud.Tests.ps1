@@ -15,7 +15,7 @@ Describe "Modo Nube: funciones puras" {
         $script:monitorFns = Get-ScriptFunctionText (Join-Path $repoRoot "LidaPrint.ps1")
         $script:guiFns     = Get-ScriptFunctionText (Join-Path $repoRoot "Configurator.ps1")
         # Copias identicas en los dos scripts (en el exe no comparten funciones).
-        $script:sharedNames = @("Test-CloudLocalHost", "Get-CloudUrlCheck", "Get-CloudFailureKind", "Get-CloudConfigHint")
+        $script:sharedNames = @("Test-CloudLocalHost", "Get-CloudUrlCheck", "Get-CloudFailureKind", "Get-CloudConfigHint", "Get-CloudRequestHeaders")
         $monitorNames = $script:sharedNames + @("Test-CloudRetryable", "Get-CloudAgeSeconds", "Test-CloudJobExpired",
             "Test-CloudKeepAliveDue", "Invoke-CloudKeepAlive", "Invoke-CloudBatch")
         foreach ($name in $monitorNames) { Invoke-Expression $script:monitorFns[$name] }
@@ -116,6 +116,23 @@ Describe "Modo Nube: funciones puras" {
             foreach ($u in $bad) {
                 $r = Get-CloudUrlCheck $u
                 $r.Error | Should -Not -BeNullOrEmpty -Because "'$u'"
+            }
+        }
+    }
+
+    Context "Filtro opcional de base de datos" {
+        It "escapa metacaracteres y limita el filtro al nombre exacto sin espacios externos" {
+            $headers = Get-CloudRequestHeaders " token " '  cliente.prod+[1](x){2}^$|a\b?*  '
+            $headers.Authorization | Should -Be "Bearer token"
+            $headers['X-Odoo-dbfilter'] | Should -Be '^cliente\.prod\+\[1]\(x\)\{2}\^\$\|a\\b\?\*$'
+            'cliente.prod+[1](x){2}^$|a\b?*' -cmatch $headers['X-Odoo-dbfilter'] | Should -BeTrue
+            'clienteXprod+[1](x){2}^$|a\b?*' -cmatch $headers['X-Odoo-dbfilter'] | Should -BeFalse
+        }
+        It "omite la cabecera con base ausente, vacia o solo espacios" {
+            foreach ($db in @($null, '', " `t ")) {
+                $headers = Get-CloudRequestHeaders "token" $db
+                $headers.Count | Should -Be 1
+                $headers.ContainsKey('X-Odoo-dbfilter') | Should -BeFalse
             }
         }
     }
@@ -236,6 +253,99 @@ Describe "Modo Nube: funciones puras" {
             # Intentos a los 40 s y a los 80 s (30 s despues del anterior).
             @($script:requests).Count | Should -Be 2
             @($script:logLines | Where-Object { $_ -like '`[WARN`]*' }).Count | Should -Be 2
+        }
+    }
+}
+
+Describe "Modo Nube: cabeceras HTTP y persistencia" {
+    BeforeAll {
+        $script:repoRoot = Split-Path -Parent $PSScriptRoot
+        $script:guiAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $script:repoRoot 'Configurator.ps1'), [ref]$null, [ref]$null)
+        $script:monitorAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $script:repoRoot 'LidaPrint.ps1'), [ref]$null, [ref]$null)
+        foreach ($ast in @($script:guiAst, $script:monitorAst)) {
+            foreach ($fn in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+                if ($fn.Name -in @('Load-Config', 'Get-LidaPrintMode', 'Get-CloudRequestHeaders', 'Invoke-CloudRequest')) {
+                    Invoke-Expression $fn.Extent.Text
+                }
+            }
+        }
+    }
+
+    It "incluye cabeceras comunes en ping, poll, PDF, ack y llamadas repetidas" {
+        $script:cloudBase = 'https://odoo.example.com/lidaprint/v1'
+        $script:cloudToken = 'token'
+        $script:cloudVersion = 'test'
+        $config = [PSCustomObject]@{ cloudDb = ' cliente.prod ' }
+        Mock Invoke-WebRequest {
+            [PSCustomObject]@{ RawContentStream = [System.IO.MemoryStream]::new() }
+        }
+        foreach ($attempt in 1..2) {
+            Invoke-CloudRequest GET '/ping' -TimeoutSec 10
+            Invoke-CloudRequest POST '/poll' @{ hostname = 'caja' }
+            Invoke-CloudRequest GET '/job/1/pdf' -OutFile (Join-Path $TestDrive 'job.pdf') -TimeoutSec 60
+            Invoke-CloudRequest POST '/job/1/ack' @{ status = 'done' }
+        }
+        Should -Invoke Invoke-WebRequest -Times 8 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq 'Bearer token' -and
+            $Headers['X-Odoo-dbfilter'] -ceq '^cliente\.prod$' -and $UserAgent -eq 'LidaPrint/test'
+        }
+        $config.cloudDb = ' '
+        Invoke-CloudRequest GET '/ping'
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            -not $Headers.ContainsKey('X-Odoo-dbfilter') -and $Headers.Authorization -eq 'Bearer token'
+        }
+    }
+
+    It "guarda el campo de la GUI y lo recupera con Load-Config" {
+        $configPath = Join-Path $TestDrive 'config.json'
+        $txtCloudDb = [PSCustomObject]@{ Text = ' cliente.prod ' }
+        $assignment = $script:guiAst.Find({
+            $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $args[0].Left.Extent.Text -eq '$newConfig'
+        }, $true)
+        $entry = $assignment.Right.Find({
+            $args[0] -is [System.Management.Automation.Language.HashtableAst]
+        }, $true).KeyValuePairs | Where-Object { $_.Item1.Value -eq 'cloudDb' }
+        $db = Invoke-Expression $entry.Item2.Extent.Text
+        $db | Should -Be 'cliente.prod'
+        $config = [PSCustomObject]@{ cloudDb = $db; downloadFolder = 'Downloads' }
+        # Execute the real Save-Config serialization, without the Windows ACL/UI side effects.
+        $save = $script:guiAst.Find({
+            $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $args[0].Name -eq 'Save-Config'
+        }, $true)
+        Invoke-Expression $save.Body.EndBlock.Statements[0].Extent.Text
+        (Load-Config).cloudDb | Should -Be 'cliente.prod'
+        $config.PSObject.Properties.Remove('cloudDb')
+        Invoke-Expression $save.Body.EndBlock.Statements[0].Extent.Text
+        (Load-Config).cloudDb | Should -Be ''
+        (Get-Content (Join-Path $script:repoRoot 'config.json') -Raw | ConvertFrom-Json).cloudDb | Should -Be ''
+    }
+
+    It "la prueba GUI usa el helper con el campo no guardado" {
+        $script:guiAst.Extent.Text | Should -Match '-Headers \(Get-CloudRequestHeaders \$token \$txtCloudDb\.Text\)'
+        $script:guiAst.Extent.Text | Should -Match 'Save-Config \$newConfig'
+    }
+
+    It "centraliza todas las llamadas HTTP del monitor en el helper Nube" {
+        $calls = @($script:monitorAst.FindAll({
+            $args[0] -is [System.Management.Automation.Language.CommandAst] -and
+            $args[0].GetCommandName() -eq 'Invoke-WebRequest'
+        }, $true))
+        $calls.Count | Should -Be 1
+        $parent = $calls[0].Parent
+        while ($parent -and $parent -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+            $parent = $parent.Parent
+        }
+        $parent.Name | Should -Be 'Invoke-CloudRequest'
+        foreach ($name in @('Send-CloudAck', 'Send-PendingCloudAcks', 'Invoke-CloudJob', 'Invoke-CloudKeepAlive', 'Invoke-CloudLoop')) {
+            $fn = $script:monitorAst.Find({
+                $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $args[0].Name -eq $name
+            }, $true)
+            $fn.Extent.Text | Should -Match 'Invoke-CloudRequest' -Because $name
         }
     }
 }
