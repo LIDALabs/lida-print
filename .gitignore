@@ -2,6 +2,9 @@
 .atl/
 docs/superpowers/
 
+# Recordatorio de modulos pendientes
+PENDIENTE-dashboard-centralizado.md
+
 # Config local del entorno de pruebas
 _test_*.json
 
