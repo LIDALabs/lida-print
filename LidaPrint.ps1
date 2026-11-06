@@ -712,17 +712,37 @@ function Invoke-PrintEscPos {
             }
             $out.Add($LF)
         }
-        1..6 | ForEach-Object { $out.Add($LF) }                      # avanzar para cortar
+        # ===== Feed final para rollo de formularios preimpresos =====
+        # El ticket debe consumir EXACTAMENTE el largo del formulario (p. ej.
+        # 5.5" = 139.7 mm = 792 pasos de 1/144") para que la perforacion quede
+        # a ras de la barra de desgarre y la deriva de formulario a formulario
+        # sea cero. La imagen ya consumio bands*lineSpacing pasos (cada banda
+        # gluea con lineSpacing pasos de 1/144"); el resto se remata con LFs a
+        # paso de 1/144" (ESC 3 1), con lo que cualquier total entero de pasos
+        # es alcanzable y ajustable a +-0.18 mm desde el config. Al final se
+        # restaura el espaciado de banda. Con escposFormSteps = 0 se conserva
+        # el comportamiento clasico (6 LFs fijos + linePitch mm extra).
+        $formSteps = if ($null -ne $config.escposFormSteps) { [int]$config.escposFormSteps } else { 0 }
+        if ($formSteps -gt 0) {
+            $postLf = $formSteps - ($bands * $lineSpacing)
+            if ($postLf -gt 0) {
+                $out.Add($ESC); $out.Add(0x33); $out.Add(1)                   # ESC 3 1: paso 1/144"
+                1..$postLf | ForEach-Object { $out.Add($LF) }
+                $out.Add($ESC); $out.Add(0x33); $out.Add([byte]$lineSpacing)  # restaurar ESC 3 n
+            }
+        } else {
+            1..6 | ForEach-Object { $out.Add($LF) }                           # avanzar para cortar
 
-        # Separacion extra entre tickets: linePitch (mm) de la pestana Forma
-        # Continua, aplicada siempre (con o sin forma continua). Cada LF avanza
-        # una banda de 8 puntos al vdpi calibrado, asi los mm se traducen a
-        # saltos reales de esta impresora.
-        $extraMm = if ($config.linePitch) { [double]$config.linePitch } else { 0 }
-        if ($extraMm -gt 0) {
-            $mmPerLf = 8.0 * 25.4 / $vdpi
-            $extraLf = [int][math]::Round($extraMm / $mmPerLf)
-            if ($extraLf -gt 0) { 1..$extraLf | ForEach-Object { $out.Add($LF) } }
+            # Separacion extra entre tickets: linePitch (mm) de la pestana Forma
+            # Continua, aplicada siempre (con o sin forma continua). Cada LF avanza
+            # una banda de 8 puntos al vdpi calibrado, asi los mm se traducen a
+            # saltos reales de esta impresora.
+            $extraMm = if ($config.linePitch) { [double]$config.linePitch } else { 0 }
+            if ($extraMm -gt 0) {
+                $mmPerLf = 8.0 * 25.4 / $vdpi
+                $extraLf = [int][math]::Round($extraMm / $mmPerLf)
+                if ($extraLf -gt 0) { 1..$extraLf | ForEach-Object { $out.Add($LF) } }
+            }
         }
 
         $res = [LidaRaw]::Send($config.printer, $out.ToArray(), ("LidaPrint: " + $fileName))
